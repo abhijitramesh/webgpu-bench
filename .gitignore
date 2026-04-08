@@ -20,3 +20,5 @@ a.out.*
 .idea/
 *.swp
 *~
+
+*.playwrite-mcp/
