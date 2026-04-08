@@ -1,0 +1,18 @@
+{
+  "name": "webgpu-bench",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "bash build.sh",
+    "bench": "node runner.js",
+    "bench:quick": "node runner.js --quick",
+    "bench:chromium": "node runner.js --browsers=chromium",
+    "report": "node report.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "playwright": "^1.49.0",
+    "webdriverio": "^9.27.0"
+  }
+}

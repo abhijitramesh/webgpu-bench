@@ -1,0 +1,22 @@
+# Build output
+build/
+
+# Dependencies
+node_modules/
+
+# Test results
+results/
+
+# Emscripten artifacts
+*.wasm
+*.js.mem
+a.out.*
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
