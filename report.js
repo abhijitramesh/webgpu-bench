@@ -17,16 +17,20 @@ function main() {
   const results = JSON.parse(fs.readFileSync(resultsFile, 'utf-8'));
   console.log(`Loaded ${results.length} benchmark results\n`);
 
+  const hasConsistency = results.some(r => r.consistency !== undefined);
+
   // Generate CSV
   const csvHeader = [
     'browser', 'variant', 'size_mb', 'status', 'webgpu_available',
     'n_gpu_layers', 'prefill_tok_s', 'decode_tok_s',
     'n_p_eval', 't_p_eval_ms', 'n_eval', 't_eval_ms',
     'wall_time_s', 'error',
+    ...(hasConsistency ? ['consistency_agreement_rate', 'consistency_n_agree', 'consistency_n_tokens', 'consistency_first_disagreement'] : []),
   ].join(',');
 
   const csvRows = results.map(r => {
     const m = r.metrics || {};
+    const c = r.consistency;
     return [
       r.browser,
       r.variant,
@@ -42,6 +46,12 @@ function main() {
       m.t_eval_ms ? m.t_eval_ms.toFixed(2) : '',
       (r.wallTimeMs / 1000).toFixed(1),
       (r.error || '').replace(/,/g, ';').replace(/\n/g, ' '),
+      ...(hasConsistency ? [
+        c == null ? '' : c.agreement_rate,
+        c == null ? '' : c.n_agree,
+        c == null ? '' : c.n_tokens,
+        c == null ? '' : c.first_disagreement,
+      ] : []),
     ].join(',');
   });
 
@@ -60,6 +70,7 @@ function main() {
         prefill_tok_s: r.metrics?.prefill_tok_s,
         decode_tok_s: r.metrics?.decode_tok_s,
         wall_time_s: (r.wallTimeMs / 1000).toFixed(1),
+        consistency: r.consistency ?? null,
       });
     } else {
       summary[r.browser].failed.push({
@@ -83,16 +94,35 @@ function main() {
 
     if (summary[browser].passed.length > 0) {
       console.log('  Passed:');
-      console.log('  ' + 'Variant'.padEnd(16) + 'Prefill (tok/s)'.padEnd(18) + 'Decode (tok/s)'.padEnd(18) + 'Wall (s)');
-      console.log('  ' + '-'.repeat(66));
-      for (const r of summary[browser].passed) {
-        console.log(
-          '  ' +
-          r.variant.padEnd(16) +
-          String(r.prefill_tok_s || 'N/A').padEnd(18) +
-          String(r.decode_tok_s || 'N/A').padEnd(18) +
-          r.wall_time_s
-        );
+      if (hasConsistency) {
+        console.log('  ' + 'Variant'.padEnd(16) + 'Prefill (tok/s)'.padEnd(18) + 'Decode (tok/s)'.padEnd(18) + 'Wall (s)'.padEnd(12) + 'CPU match');
+        console.log('  ' + '-'.repeat(80));
+        for (const r of summary[browser].passed) {
+          const c = r.consistency;
+          const matchLabel = c == null ? 'no baseline'
+            : c.agreement_rate === 1.0 ? '100% top-1'
+            : `${(c.agreement_rate * 100).toFixed(1)}% top-1 (diverge@${c.first_disagreement})`;
+          console.log(
+            '  ' +
+            r.variant.padEnd(16) +
+            String(r.prefill_tok_s || 'N/A').padEnd(18) +
+            String(r.decode_tok_s || 'N/A').padEnd(18) +
+            r.wall_time_s.padEnd(12) +
+            matchLabel
+          );
+        }
+      } else {
+        console.log('  ' + 'Variant'.padEnd(16) + 'Prefill (tok/s)'.padEnd(18) + 'Decode (tok/s)'.padEnd(18) + 'Wall (s)');
+        console.log('  ' + '-'.repeat(66));
+        for (const r of summary[browser].passed) {
+          console.log(
+            '  ' +
+            r.variant.padEnd(16) +
+            String(r.prefill_tok_s || 'N/A').padEnd(18) +
+            String(r.decode_tok_s || 'N/A').padEnd(18) +
+            r.wall_time_s
+          );
+        }
       }
     }
 
@@ -103,6 +133,20 @@ function main() {
       }
     }
     console.log('');
+  }
+
+  if (hasConsistency) {
+    console.log('=== Consistency Issues ===');
+    const issues = results.filter(r => r.consistency && r.consistency.agreement_rate < 1.0);
+    if (issues.length === 0) {
+      console.log('  All variants agree 100% with CPU baseline on top-1 token.\n');
+    } else {
+      for (const r of issues) {
+        const c = r.consistency;
+        console.log(`  ${r.browser} / ${r.variant}: ${(c.agreement_rate * 100).toFixed(1)}% (${c.n_agree}/${c.n_tokens} tokens agree, first diverge @ token ${c.first_disagreement})`);
+      }
+      console.log('');
+    }
   }
 }
 

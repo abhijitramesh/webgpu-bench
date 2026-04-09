@@ -25,6 +25,8 @@ window.addEventListener('unhandledrejection', (e) => {
   const nPredict    = parseInt(params.get('nPredict') || '128', 10);
   const nCtx        = parseInt(params.get('nCtx')     || '2048', 10);
   const nGpuLayers  = parseInt(params.get('nGpuLayers') || '999', 10);
+  // Optional: comma-separated CPU reference token IDs for forced-decoding consistency check
+  const refTokenIds = params.get('refTokenIds') || null;
 
   // Detect JSPI support (following wllama's pattern: src/wllama.ts:602)
   const hasJspi = 'Suspending' in WebAssembly;
@@ -199,6 +201,29 @@ window.addEventListener('unhandledrejection', (e) => {
       decode_tok_s: parseFloat(decodeTokS) || 0,
     };
     window.__BENCH.output = result.output || '';
+
+    // Forced-decoding consistency check (only when running on GPU with a CPU reference)
+    // Feeds the CPU reference token sequence through this backend position-by-position
+    // and checks whether this backend independently agrees on the same top-1 token.
+    // This avoids the cascading divergence problem of text comparison.
+    if (refTokenIds && nGpuLayers > 0 && result.token_ids?.length > 0) {
+      log('Running forced-decoding consistency check...');
+      const evalJson = await Module.ccall('bench_eval_tokens', 'string',
+        ['string', 'string'],
+        [prompt, refTokenIds],
+        {async: true}
+      );
+      const evalResult = JSON.parse(evalJson);
+      if (evalResult.error) {
+        log(`Consistency check error: ${evalResult.error}`);
+      } else {
+        window.__BENCH.consistency = evalResult;
+        log(`Consistency: ${(evalResult.agreement_rate * 100).toFixed(1)}% top-1 agreement (${evalResult.n_agree}/${evalResult.n_tokens} tokens)`);
+        if (evalResult.first_disagreement >= 0) {
+          log(`First disagreement at token position ${evalResult.first_disagreement}`);
+        }
+      }
+    }
 
     // Cleanup
     log('Calling bench_exit()...');

@@ -58,19 +58,38 @@ async function getGpuInfo(page) {
   }
 }
 
-function buildHarnessUrl(serverUrl, variant) {
+function buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds = null) {
   const harnessUrl = new URL('/harness.html', serverUrl);
   harnessUrl.searchParams.set('model', variant.filename);
   harnessUrl.searchParams.set('hfRepo', variant.repo);
   harnessUrl.searchParams.set('prompt', config.PROMPT);
   harnessUrl.searchParams.set('nPredict', String(config.N_PREDICT));
   harnessUrl.searchParams.set('nCtx', String(config.N_CTX));
-  harnessUrl.searchParams.set('nGpuLayers', String(config.N_GPU_LAYERS));
+  harnessUrl.searchParams.set('nGpuLayers', String(nGpuLayers));
+  if (refTokenIds) harnessUrl.searchParams.set('refTokenIds', refTokenIds);
   return harnessUrl.toString();
 }
 
+function loadCpuBaselines() {
+  const file = path.join(config.RESULTS_DIR, 'cpu_baselines.json');
+  if (fs.existsSync(file)) {
+    return JSON.parse(fs.readFileSync(file, 'utf-8'));
+  }
+  return {};
+}
+
+function saveCpuBaselines(baselines) {
+  const file = path.join(config.RESULTS_DIR, 'cpu_baselines.json');
+  fs.writeFileSync(file, JSON.stringify(baselines, null, 2));
+}
+
+// Convert stored token ID array to the CSV string expected by bench_eval_tokens
+function tokenIdsToCsv(tokenIds) {
+  return Array.isArray(tokenIds) ? tokenIds.join(',') : null;
+}
+
 // Run a single benchmark via Playwright (chromium, firefox)
-async function runBenchmark(browser, variant, serverUrl) {
+async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null) {
   const context = await browser.newContext();
   const page = await context.newPage();
 
@@ -80,7 +99,7 @@ async function runBenchmark(browser, variant, serverUrl) {
     consoleLogs.push(`[${msg.type()}] ${msg.text()}`);
   });
 
-  const harnessUrl = buildHarnessUrl(serverUrl, variant);
+  const harnessUrl = buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds);
 
   try {
     await page.goto(harnessUrl, { timeout: 30_000 });
@@ -117,8 +136,8 @@ async function runBenchmark(browser, variant, serverUrl) {
 }
 
 // Run a single benchmark in an existing WebDriverIO Safari session
-async function runBenchmarkSafari(browser, variant, serverUrl) {
-  const harnessUrl = buildHarnessUrl(serverUrl, variant);
+async function runBenchmarkSafari(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null) {
+  const harnessUrl = buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds);
 
   try {
     await browser.url(harnessUrl);
@@ -151,6 +170,49 @@ async function runBenchmarkSafari(browser, variant, serverUrl) {
   }
 }
 
+// Format consistency result for console output
+function formatConsistency(c) {
+  if (!c) return 'no baseline';
+  const pct = (c.agreement_rate * 100).toFixed(1);
+  if (c.agreement_rate === 1.0) return `100% top-1 agreement`;
+  return `${pct}% top-1 agreement (first diverge @ token ${c.first_disagreement})`;
+}
+
+// Collect CPU baselines (n_gpu_layers=0) for any variants missing from the cache.
+// Stores token IDs from the CPU run — these are the reference sequence for forced eval.
+// runFn: (variant, nGpuLayers, refTokenIds) => { bench }
+// Mutates the baselines[browserName] map and saves to disk after each run.
+async function collectMissingBaselines(browserName, variants, runFn, baselines) {
+  if (!baselines[browserName]) baselines[browserName] = {};
+  const browserBaselines = baselines[browserName];
+
+  const missing = variants.filter(v => !(v.filename in browserBaselines));
+  if (missing.length === 0) {
+    console.log(`  CPU baselines: all ${variants.length} cached`);
+    return;
+  }
+
+  console.log(`  CPU baselines: collecting ${missing.length} (${variants.length - missing.length} cached)`);
+
+  for (let i = 0; i < missing.length; i++) {
+    const variant = missing[i];
+    process.stdout.write(`    [${i + 1}/${missing.length}] ${variant.name} (CPU)... `);
+
+    const { bench } = await runFn(variant, 0);
+
+    if (bench.status === 'done' && bench.metrics?.token_ids?.length > 0) {
+      // Store token IDs as the reference for forced-decoding consistency check
+      browserBaselines[variant.filename] = bench.metrics.token_ids;
+      console.log(`OK (${bench.metrics.token_ids.length} tokens)`);
+    } else {
+      browserBaselines[variant.filename] = null; // failed — record so we don't retry
+      console.log(`FAIL (${bench.error || 'unknown'})`);
+    }
+
+    saveCpuBaselines(baselines);
+  }
+}
+
 // Main
 async function main() {
   console.log('=== WebGPU LLM Benchmark Runner ===');
@@ -158,6 +220,7 @@ async function main() {
   console.log(`Variants: ${config.MODEL_VARIANTS.length} models`);
   console.log(`Machine:  ${config.MACHINE.platform}/${config.MACHINE.arch} - ${config.MACHINE.cpus}`);
   console.log(`GPU layers: ${config.N_GPU_LAYERS}`);
+  if (config.CONSISTENCY) console.log('Consistency mode: ON (CPU baselines will be collected per browser)');
   console.log('');
 
   // Ensure results dir exists
@@ -166,6 +229,9 @@ async function main() {
   // Start server
   const { server, url: serverUrl } = await startServer(config.PORT);
   console.log(`Server: ${serverUrl}`);
+
+  // Load persisted CPU baselines (allows resuming after crash)
+  const cpuBaselines = config.CONSISTENCY ? loadCpuBaselines() : {};
 
   const allResults = [];
   const timestamp = new Date().toISOString();
@@ -184,14 +250,30 @@ async function main() {
         continue;
       }
 
+      if (config.CONSISTENCY) {
+        await collectMissingBaselines(
+          browserName,
+          config.MODEL_VARIANTS,
+          (variant, nGpuLayers) => runBenchmarkSafari(safariSession, variant, serverUrl, nGpuLayers),
+          cpuBaselines,
+        );
+      }
+
       for (let i = 0; i < config.MODEL_VARIANTS.length; i++) {
         const variant = config.MODEL_VARIANTS[i];
         const progress = `[${i + 1}/${config.MODEL_VARIANTS.length}]`;
         console.log(`  ${progress} ${variant.name} (${variant.sizeMB} MB)...`);
 
+        const refTokenIds = config.CONSISTENCY
+          ? tokenIdsToCsv(cpuBaselines[browserName]?.[variant.filename])
+          : null;
+
         const startTime = Date.now();
-        const { bench, consoleLogs } = await runBenchmarkSafari(safariSession, variant, serverUrl);
+        const { bench } = await runBenchmarkSafari(safariSession, variant, serverUrl, config.N_GPU_LAYERS, refTokenIds);
         const wallTimeMs = Date.now() - startTime;
+
+        // consistency is set by harness.js via bench_eval_tokens (forced decoding)
+        const consistency = bench.consistency ?? null;
 
         const result = {
           timestamp,
@@ -213,13 +295,15 @@ async function main() {
           metrics: bench.metrics || null,
           output: (bench.output || '').substring(0, 200),
           machine: config.MACHINE,
+          consistency,
         };
 
         allResults.push(result);
 
         if (bench.status === 'done' && bench.metrics) {
           const m = bench.metrics;
-          console.log(`    OK | prefill: ${m.prefill_tok_s} tok/s | decode: ${m.decode_tok_s} tok/s | wall: ${(wallTimeMs / 1000).toFixed(1)}s`);
+          const consistencyLabel = config.CONSISTENCY ? ` | ${formatConsistency(consistency)}` : '';
+          console.log(`    OK | prefill: ${m.prefill_tok_s} tok/s | decode: ${m.decode_tok_s} tok/s | wall: ${(wallTimeMs / 1000).toFixed(1)}s${consistencyLabel}`);
         } else {
           console.log(`    FAIL | ${bench.error || 'unknown error'}`);
         }
@@ -243,6 +327,15 @@ async function main() {
       continue;
     }
 
+    if (config.CONSISTENCY) {
+      await collectMissingBaselines(
+        browserName,
+        config.MODEL_VARIANTS,
+        (variant, nGpuLayers) => runBenchmark(browser, variant, serverUrl, nGpuLayers),
+        cpuBaselines,
+      );
+    }
+
     // Get GPU info once per browser
     let gpuInfo = null;
     try {
@@ -260,9 +353,16 @@ async function main() {
       const progress = `[${i + 1}/${config.MODEL_VARIANTS.length}]`;
       console.log(`  ${progress} ${variant.name} (${variant.sizeMB} MB)...`);
 
+      const refTokenIds = config.CONSISTENCY
+        ? tokenIdsToCsv(cpuBaselines[browserName]?.[variant.filename])
+        : null;
+
       const startTime = Date.now();
-      const { bench, consoleLogs } = await runBenchmark(browser, variant, serverUrl);
+      const { bench } = await runBenchmark(browser, variant, serverUrl, config.N_GPU_LAYERS, refTokenIds);
       const wallTimeMs = Date.now() - startTime;
+
+      // consistency is set by harness.js via bench_eval_tokens (forced decoding)
+      const consistency = bench.consistency ?? null;
 
       const result = {
         timestamp,
@@ -284,14 +384,15 @@ async function main() {
         metrics: bench.metrics || null,
         output: (bench.output || '').substring(0, 200),
         machine: config.MACHINE,
+        consistency,
       };
 
       allResults.push(result);
 
-      // Print summary
       if (bench.status === 'done' && bench.metrics) {
         const m = bench.metrics;
-        console.log(`    OK | prefill: ${m.prefill_tok_s} tok/s | decode: ${m.decode_tok_s} tok/s | wall: ${(wallTimeMs / 1000).toFixed(1)}s`);
+        const consistencyLabel = config.CONSISTENCY ? ` | ${formatConsistency(consistency)}` : '';
+        console.log(`    OK | prefill: ${m.prefill_tok_s} tok/s | decode: ${m.decode_tok_s} tok/s | wall: ${(wallTimeMs / 1000).toFixed(1)}s${consistencyLabel}`);
       } else {
         console.log(`    FAIL | ${bench.error || 'unknown error'}`);
       }
@@ -309,6 +410,14 @@ async function main() {
   fs.writeFileSync(resultsFile, JSON.stringify(allResults, null, 2));
   console.log(`\nResults saved to ${resultsFile}`);
   console.log(`Total: ${allResults.length} benchmarks (${allResults.filter(r => r.status === 'done').length} passed, ${allResults.filter(r => r.status === 'error').length} failed)`);
+
+  if (config.CONSISTENCY) {
+    const withConsistency = allResults.filter(r => r.consistency);
+    const perfect = withConsistency.filter(r => r.consistency.agreement_rate === 1.0).length;
+    const partial = withConsistency.filter(r => r.consistency.agreement_rate < 1.0).length;
+    const noBaseline = allResults.filter(r => r.status === 'done' && !r.consistency).length;
+    console.log(`Consistency: ${perfect} perfect (100%), ${partial} partial, ${noBaseline} no baseline`);
+  }
 
   await stopServer(server);
 }

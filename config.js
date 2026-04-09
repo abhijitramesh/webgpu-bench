@@ -36,6 +36,7 @@ function parseArgs() {
     variants: null,
     models: null,
     noWebgpu: false,
+    consistency: false,
   };
 
   for (const arg of args) {
@@ -43,6 +44,8 @@ function parseArgs() {
       parsed.quick = true;
     } else if (arg === '--no-webgpu') {
       parsed.noWebgpu = true;
+    } else if (arg === '--consistency') {
+      parsed.consistency = true;
     } else if (arg.startsWith('--browsers=')) {
       parsed.browsers = arg.split('=')[1].split(',');
     } else if (arg.startsWith('--variants=')) {
@@ -88,6 +91,9 @@ export function getConfig() {
     N_PREDICT: 128,
     N_CTX: 2048,
     N_GPU_LAYERS: args.noWebgpu ? 0 : 999,
+
+    // Consistency mode: run CPU baselines and compare
+    CONSISTENCY: args.consistency || false,
 
     // Browser config
     BROWSERS: browsers,

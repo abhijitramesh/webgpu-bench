@@ -1,6 +1,6 @@
 # webgpu-bench
 
-Automated benchmarking framework for llama.cpp's WebGPU backend. Compiles llama.cpp to WebAssembly, runs GGUF models in the browser via WebGPU, and measures inference performance across Chromium, Firefox, and Safari using Playwright.
+Automated benchmarking framework for llama.cpp's WebGPU backend. Compiles llama.cpp to WebAssembly, runs GGUF models in the browser via WebGPU, and measures inference performance and numerical correctness across Chromium, Firefox, and Safari using Playwright.
 
 ## Prerequisites
 
@@ -79,6 +79,10 @@ node runner.js --models=Llama-3.2-1B-Instruct
 # CPU-only (disable WebGPU)
 node runner.js --no-webgpu
 
+# Consistency check: measure WebGPU numerical correctness vs CPU baseline
+node runner.js --quick --consistency
+node runner.js --quick --browsers=chromium --consistency
+
 # Combine flags
 node runner.js --quick --browsers=chromium --no-webgpu
 ```
@@ -90,13 +94,14 @@ Results are saved to `results/`:
 - `results.json` — full benchmark data
 - `summary.json` — grouped by browser with pass/fail
 - `results.csv` — flat CSV for spreadsheets
+- `cpu_baselines.json` — cached CPU reference token sequences (created by `--consistency`)
 
 Generate reports:
 ```bash
 node report.js
 ```
 
-### Output Fields
+### Performance Fields
 
 | Field | Description |
 |-------|-------------|
@@ -108,6 +113,46 @@ node report.js
 | `n_eval` | Number of tokens generated |
 | `buildType` | `jspi` or `asyncify` (which WASM variant was used) |
 | `webgpuAvailable` | Whether WebGPU was available in the browser |
+
+### Consistency Fields (with `--consistency`)
+
+| Field | Description |
+|-------|-------------|
+| `consistency.agreement_rate` | Fraction of token positions where WebGPU and CPU independently agree on the top-1 token (0.0–1.0) |
+| `consistency.n_agree` | Number of positions that agreed |
+| `consistency.n_tokens` | Total positions evaluated |
+| `consistency.first_disagreement` | Token position of first divergence (-1 if perfect agreement) |
+| `consistency.matches` | Per-position agreement as a compact 0/1 array |
+
+## Consistency Measurement
+
+The `--consistency` flag measures how faithfully the WebGPU backend reproduces the CPU computation for each quantization type.
+
+### How it works
+
+For each variant being tested, two runs are performed in the same browser:
+
+1. **CPU baseline** (`n_gpu_layers=0`): greedy-decodes 128 tokens and records the token ID sequence. Cached to `results/cpu_baselines.json` so subsequent runs skip this step.
+2. **WebGPU run** (`n_gpu_layers=999`): performs the normal benchmark for performance metrics, then runs a **forced-decoding pass** — feeds the CPU's token sequence into the model one token at a time and checks whether the WebGPU backend independently predicts the same top-1 token at each position.
+
+Using the same browser for both runs isolates the WebGPU backend precisely: JSPI builds are compared against JSPI CPU, Asyncify builds against Asyncify CPU.
+
+### Why forced decoding, not text comparison
+
+Naively comparing generated text suffers from **cascading divergence**: a single token difference changes the KV cache context for all subsequent tokens, making the rest of the output statistically unrelated. A text `matchRatio` of 24% might mean only one token actually diverged — the rest is noise.
+
+Forced decoding avoids this entirely. Each of the 128 positions is evaluated independently against the same reference context, giving a clean per-token accuracy signal. This is the same "same top-1" metric used by llama.cpp's `perplexity` tool.
+
+### Interpreting results
+
+| `agreement_rate` | Interpretation |
+|---|---|
+| `1.00` | WebGPU backend is numerically identical to CPU for this quant — no precision issues |
+| `0.95–0.99` | A few tokens differ due to near-equal logits flipping across backends — expected for lower-precision quants, not a bug |
+| `< 0.90` | Systematic precision issues — the GPU kernel for this quantization type may need investigation |
+| `0.00` | First token wrong — the quantization kernel is likely broken entirely |
+
+Q8_0 typically achieves 100% agreement. Q4_K_M and Q2_K may have a small number of differing positions due to reduced numerical precision, which is expected and consistent with llama.cpp's own tolerance thresholds.
 
 ## Adding Models
 
@@ -188,6 +233,18 @@ webgpu-bench/
 5. Inference runs via WebGPU (or CPU fallback) using llama.cpp's C API
 6. Performance metrics are collected via `llama_perf_context()` and exposed to Playwright
 7. Results are aggregated into JSON/CSV
+
+### Exported WASM Functions
+
+| Function | Description |
+|----------|-------------|
+| `bench_init()` | Load all GGML backends |
+| `bench_load(path, n_ctx, n_gpu_layers)` | Load a GGUF model |
+| `bench_run(prompt, n_predict)` | Greedy-decode `n_predict` tokens, return metrics + token IDs as JSON |
+| `bench_eval_tokens(prompt, ref_ids_csv)` | Forced-decoding consistency check against a CPU reference token sequence |
+| `bench_exit()` | Free model and context |
+
+All functions use greedy sampling (`llama_sampler_init_greedy`) for deterministic, reproducible output.
 
 ### Cross-Platform
 

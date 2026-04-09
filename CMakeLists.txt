@@ -36,7 +36,7 @@ if (EMSCRIPTEN)
     # Common link options for both variants
     target_link_options(bench PRIVATE
         # Exported C functions callable from JS
-        "SHELL:-sEXPORTED_FUNCTIONS=_bench_init,_bench_load,_bench_run,_bench_exit,_malloc,_free"
+        "SHELL:-sEXPORTED_FUNCTIONS=_bench_init,_bench_load,_bench_run,_bench_eval_tokens,_bench_exit,_malloc,_free"
         "SHELL:-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,FS,MEMFS,HEAPU8,UTF8ToString"
         # Module pattern: createBenchModule() factory function
         "SHELL:-sMODULARIZE=1"
@@ -58,7 +58,7 @@ if (EMSCRIPTEN)
         message(STATUS "webgpu-bench: using JSPI async mode")
         target_link_options(bench PRIVATE
             "SHELL:-sJSPI"
-            "SHELL:-sJSPI_EXPORTS=['bench_init','bench_load','bench_run','bench_exit']"
+            "SHELL:-sJSPI_EXPORTS=['bench_init','bench_load','bench_run','bench_eval_tokens','bench_exit']"
             "-fwasm-exceptions"
         )
     else()

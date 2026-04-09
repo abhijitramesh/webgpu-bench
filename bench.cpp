@@ -23,7 +23,21 @@ static const llama_vocab * g_vocab = nullptr;
 static int g_n_ctx = 2048;
 
 // Static buffer for returning JSON strings to JS
-static char g_result_buf[8192];
+// Sized for bench_run output: ~200 fixed fields + 4096 text + 900 token_ids
+static char g_result_buf[16384];
+
+// Parse a comma-separated list of integers into token IDs
+static std::vector<llama_token> parse_token_ids(const char* csv) {
+    std::vector<llama_token> ids;
+    const char* p = csv;
+    while (*p) {
+        while (*p == ' ' || *p == ',') p++;
+        if (!*p) break;
+        ids.push_back((llama_token)atoi(p));
+        while (*p && *p != ',') p++;
+    }
+    return ids;
+}
 
 extern "C" {
 
@@ -129,6 +143,7 @@ const char * bench_run(const char * prompt, int n_predict) {
 
     // Generate tokens
     std::string output_text;
+    std::vector<llama_token> generated_ids;
     int n_decoded = 0;
     int n_pos = batch.n_tokens;
 
@@ -138,6 +153,8 @@ const char * bench_run(const char * prompt, int n_predict) {
         if (llama_vocab_is_eog(g_vocab, new_token)) {
             break;
         }
+
+        generated_ids.push_back(new_token);
 
         // Convert token to text
         char piece_buf[256];
@@ -182,6 +199,16 @@ const char * bench_run(const char * prompt, int n_predict) {
         escaped_output += "...(truncated)";
     }
 
+    // Serialize generated token IDs as a compact JSON int array
+    std::string token_ids_str;
+    token_ids_str.reserve(generated_ids.size() * 6 + 2);
+    token_ids_str = "[";
+    for (size_t i = 0; i < generated_ids.size(); i++) {
+        if (i > 0) token_ids_str += ",";
+        token_ids_str += std::to_string(generated_ids[i]);
+    }
+    token_ids_str += "]";
+
     snprintf(g_result_buf, sizeof(g_result_buf),
         "{"
         "\"success\":true,"
@@ -191,7 +218,8 @@ const char * bench_run(const char * prompt, int n_predict) {
         "\"t_eval_ms\":%.2f,"
         "\"n_p_eval\":%d,"
         "\"n_eval\":%d,"
-        "\"output\":\"%s\""
+        "\"output\":\"%s\","
+        "\"token_ids\":%s"
         "}",
         n_prompt,
         n_decoded,
@@ -199,7 +227,102 @@ const char * bench_run(const char * prompt, int n_predict) {
         perf.t_eval_ms,
         perf.n_p_eval,
         perf.n_eval,
-        escaped_output.c_str()
+        escaped_output.c_str(),
+        token_ids_str.c_str()
+    );
+
+    return g_result_buf;
+}
+
+// Forced-decoding consistency check against a CPU reference token sequence.
+// Feeds each reference token into the (already loaded) model one at a time and
+// checks whether this backend independently agrees on the same top-1 token.
+// This is the same "same top-1" metric used by llama.cpp's perplexity tool.
+// ref_ids_csv: comma-separated token IDs from the CPU baseline run.
+const char* bench_eval_tokens(const char* prompt, const char* ref_ids_csv) {
+    if (!g_model || !g_ctx) {
+        snprintf(g_result_buf, sizeof(g_result_buf), "{\"error\":\"model not loaded\"}");
+        return g_result_buf;
+    }
+
+    std::vector<llama_token> ref_ids = parse_token_ids(ref_ids_csv);
+    if (ref_ids.empty()) {
+        snprintf(g_result_buf, sizeof(g_result_buf), "{\"error\":\"no reference token ids\"}");
+        return g_result_buf;
+    }
+
+    // Start fresh — clear the memory (KV cache) from the bench_run that just completed
+    llama_memory_clear(llama_get_memory(g_ctx), false);
+
+    // Tokenize and prefill prompt (same as bench_run)
+    const int n_prompt = -llama_tokenize(g_vocab, prompt, strlen(prompt), NULL, 0, true, true);
+    if (n_prompt <= 0) {
+        snprintf(g_result_buf, sizeof(g_result_buf), "{\"error\":\"tokenization failed\"}");
+        return g_result_buf;
+    }
+    std::vector<llama_token> prompt_tokens(n_prompt);
+    llama_tokenize(g_vocab, prompt, strlen(prompt), prompt_tokens.data(), n_prompt, true, true);
+
+    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
+    if (llama_decode(g_ctx, batch)) {
+        snprintf(g_result_buf, sizeof(g_result_buf), "{\"error\":\"prefill failed\"}");
+        return g_result_buf;
+    }
+
+    // Forced decoding: at each position, check what this backend would pick,
+    // then advance context with the reference token (not our prediction).
+    const int n_vocab = llama_vocab_n_tokens(g_vocab);
+    const int n_tokens = (int)ref_ids.size();
+    int n_agree = 0;
+    int first_disagreement = -1;
+
+    // matches: compact "0"/"1" array for per-token agreement
+    std::string matches_str;
+    matches_str.reserve(n_tokens * 2 + 2);
+    matches_str = "[";
+
+    for (int i = 0; i < n_tokens; i++) {
+        float* logits = llama_get_logits(g_ctx);
+
+        // Argmax over vocabulary
+        llama_token top1 = 0;
+        float max_logit = logits[0];
+        for (int v = 1; v < n_vocab; v++) {
+            if (logits[v] > max_logit) {
+                max_logit = logits[v];
+                top1 = v;
+            }
+        }
+
+        const bool match = (top1 == ref_ids[i]);
+        if (match) n_agree++;
+        if (!match && first_disagreement < 0) first_disagreement = i;
+
+        if (i > 0) matches_str += ",";
+        matches_str += match ? "1" : "0";
+
+        // Feed reference token (forced) to build the correct context for next position
+        batch = llama_batch_get_one(&ref_ids[i], 1);
+        if (llama_decode(g_ctx, batch)) break;
+    }
+
+    matches_str += "]";
+
+    const float agreement_rate = n_tokens > 0 ? (float)n_agree / n_tokens : 0.0f;
+
+    snprintf(g_result_buf, sizeof(g_result_buf),
+        "{"
+        "\"agreement_rate\":%.4f,"
+        "\"n_agree\":%d,"
+        "\"n_tokens\":%d,"
+        "\"first_disagreement\":%d,"
+        "\"matches\":%s"
+        "}",
+        agreement_rate,
+        n_agree,
+        n_tokens,
+        first_disagreement,
+        matches_str.c_str()
     );
 
     return g_result_buf;
