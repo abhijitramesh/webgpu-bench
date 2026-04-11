@@ -8,7 +8,9 @@
     "bench": "node runner.js",
     "bench:quick": "node runner.js --quick",
     "bench:chromium": "node runner.js --browsers=chromium",
-    "report": "node report.js"
+    "report": "node report.js",
+    "submit": "node scripts/submit-results.js",
+    "build:site": "node scripts/build-site.js"
   },
   "dependencies": {
     "express": "^4.21.0",

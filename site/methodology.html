@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Methodology — WebGPU Bench</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .methodology { max-width: 800px; margin: 0 auto; padding: 24px; }
+    .methodology h2 { margin-top: 32px; margin-bottom: 12px; font-size: 18px; }
+    .methodology h3 { margin-top: 20px; margin-bottom: 8px; font-size: 15px; color: var(--text-muted); }
+    .methodology p, .methodology li { line-height: 1.7; margin-bottom: 8px; }
+    .methodology ul { padding-left: 20px; }
+    .methodology table { margin: 12px 0; }
+    .methodology td, .methodology th { padding: 6px 12px; text-align: left; }
+    .methodology th { color: var(--text-muted); font-size: 12px; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+    .methodology td { border-bottom: 1px solid var(--border); font-size: 13px; }
+    .methodology code { background: var(--bg-card); padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+    .back-link { display: inline-block; margin-bottom: 16px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>WebGPU Bench</h1>
+    <div class="header-links">
+      <a href="index.html">Dashboard</a>
+    </div>
+  </div>
+
+  <div class="methodology">
+    <a href="index.html" class="back-link">&larr; Back to Dashboard</a>
+
+    <h2>How Benchmarks Work</h2>
+    <ol>
+      <li><code>build.sh</code> compiles llama.cpp to WebAssembly with WebGPU support via Emscripten + emdawnwebgpu, producing two WASM variants: JSPI (Chrome) and Asyncify (Firefox, Safari).</li>
+      <li><code>runner.js</code> launches Playwright browsers and navigates to <code>harness.html</code>.</li>
+      <li><code>harness.js</code> detects JSPI support and loads the correct WASM variant.</li>
+      <li>The GGUF model is downloaded from HuggingFace directly in the browser.</li>
+      <li>Inference runs via WebGPU (or CPU fallback) using llama.cpp's C API with greedy sampling for deterministic output.</li>
+      <li>Performance metrics are collected via <code>llama_perf_context()</code> and returned to Playwright.</li>
+      <li>A fresh browser instance is launched for each variant to prevent WASM memory accumulation (OOM fix).</li>
+    </ol>
+
+    <h2>Metrics Glossary</h2>
+    <table>
+      <thead>
+        <tr><th>Metric</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>decode_tok_s</code></td><td>Token generation speed (tokens/sec) — main performance metric</td></tr>
+        <tr><td><code>prefill_tok_s</code></td><td>Prompt processing speed (tokens/sec)</td></tr>
+        <tr><td><code>t_eval_ms</code></td><td>Total decode time in milliseconds</td></tr>
+        <tr><td><code>t_p_eval_ms</code></td><td>Total prefill time in milliseconds</td></tr>
+        <tr><td><code>n_eval</code></td><td>Number of tokens generated</td></tr>
+        <tr><td><code>n_p_eval</code></td><td>Number of prompt tokens processed</td></tr>
+        <tr><td><code>buildType</code></td><td><code>jspi</code> or <code>asyncify</code> — which WASM variant was used</td></tr>
+        <tr><td><code>webgpuAvailable</code></td><td>Whether WebGPU was available in the browser</td></tr>
+        <tr><td><code>wallTimeMs</code></td><td>Total wall-clock time for the benchmark run</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Error Categories</h2>
+    <table>
+      <thead>
+        <tr><th>Category</th><th>Pattern</th><th>Typical Cause</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>OOM</td><td>out of memory, memory allocation</td><td>Model too large for available WASM memory</td></tr>
+        <tr><td>WASM Abort</td><td>wasm, abort, unreachable</td><td>WASM execution error, often from unsupported operations</td></tr>
+        <tr><td>Timeout</td><td>timeout, timed out</td><td>Benchmark exceeded time limit (model download or inference)</td></tr>
+        <tr><td>Download Failed</td><td>download, fetch, 404, network</td><td>Model file not found or network error</td></tr>
+        <tr><td>Other</td><td>everything else</td><td>Uncategorized errors</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Consistency Measurement</h2>
+    <p>The <code>--consistency</code> flag measures how faithfully the WebGPU backend reproduces the CPU computation for each quantization type.</p>
+
+    <h3>How it works</h3>
+    <p>For each variant, two runs are performed in the same browser:</p>
+    <ol>
+      <li><strong>CPU baseline</strong> (<code>n_gpu_layers=0</code>): greedy-decodes 128 tokens and records the token ID sequence. Cached to <code>results/cpu_baselines.json</code>.</li>
+      <li><strong>WebGPU run</strong> (<code>n_gpu_layers=999</code>): performs a forced-decoding pass — feeds the CPU's token sequence one token at a time and checks whether the WebGPU backend independently predicts the same top-1 token at each position.</li>
+    </ol>
+
+    <h3>Why forced decoding</h3>
+    <p>Naively comparing generated text suffers from cascading divergence: a single token difference changes the KV cache context for all subsequent tokens. Forced decoding evaluates each position independently, giving a clean per-token accuracy signal.</p>
+
+    <h3>Interpreting results</h3>
+    <table>
+      <thead>
+        <tr><th>agreement_rate</th><th>Interpretation</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>1.00</code></td><td>Numerically identical to CPU — no precision issues</td></tr>
+        <tr><td><code>0.95–0.99</code></td><td>A few tokens differ due to near-equal logits — expected for lower-precision quants</td></tr>
+        <tr><td><code>&lt; 0.90</code></td><td>Systematic precision issues — GPU kernel may need investigation</td></tr>
+        <tr><td><code>0.00</code></td><td>First token wrong — quantization kernel likely broken</td></tr>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

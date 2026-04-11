@@ -22,3 +22,10 @@ a.out.*
 *~
 
 *.playwrite-mcp/
+.playwright-mcp/
+
+# Screenshots from browser testing
+*.png
+
+# Dashboard build output (auto-generated)
+site/data/combined.json

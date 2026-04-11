@@ -154,6 +154,53 @@ Forced decoding avoids this entirely. Each of the 128 positions is evaluated ind
 
 Q8_0 typically achieves 100% agreement. Q4_K_M and Q2_K may have a small number of differing positions due to reduced numerical precision, which is expected and consistent with llama.cpp's own tolerance thresholds.
 
+## Dashboard
+
+A static dashboard visualizes benchmark results across machines and browsers. It is deployed to GitHub Pages automatically when results are merged to `main`.
+
+### Viewing Results
+
+Visit the GitHub Pages site for this repo, or preview locally:
+
+```bash
+npm run build:site
+npx serve site
+```
+
+### Submitting Results from Your Machine
+
+```bash
+# 1. Run benchmarks
+node runner.js --browsers=chromium,firefox
+
+# 2. Prepare results for submission (strips heavy fields, generates machine slug)
+npm run submit
+
+# 3. Commit and open a PR
+git checkout -b results/my-machine
+git add data/machines/
+git commit -m "Add benchmark results for <your CPU>"
+git push -u origin results/my-machine
+gh pr create
+```
+
+On merge, GitHub Actions rebuilds the dashboard with the new data.
+
+### How the Data Pipeline Works
+
+1. `npm run submit` reads `results/results.json`, strips large fields (`token_ids`, `output`), and writes a cleaned file to `data/machines/{slug}.json` where the slug is derived from your CPU, RAM, and platform (e.g., `apple-m4-pro-48gb-darwin`).
+2. `npm run build:site` merges all machine files into `site/data/combined.json` with flattened metrics and metadata.
+3. The static site at `site/` fetches `combined.json` at load time and renders all visualizations client-side.
+
+### Dashboard Features
+
+- **Support Matrix** — Which model/quant/browser combos pass or fail, color-coded
+- **Detailed Results** — Full metrics table with decode tok/s, prefill tok/s, eval times, build type, WebGPU status
+- **Performance Charts** — Grouped bar charts for decode and prefill throughput, throughput vs model size
+- **Machine Comparison** — Side-by-side performance when multiple machines have data
+- **Error Analysis** — Failures grouped by category (OOM, WASM Abort, Timeout)
+- **Methodology** — How benchmarks work, metrics glossary, consistency measurement explanation
+
 ## Adding Models
 
 Edit `models.json` to add new models, repositories, or quantization types.
@@ -222,6 +269,14 @@ webgpu-bench/
   config.js           # Reads models.json, parses CLI args
   models.json         # Model definitions (edit this to add models)
   report.js           # Results aggregation
+
+  scripts/
+    submit-results.js # Prepare results for PR submission
+    build-site.js     # Merge machine data into combined.json
+
+  data/machines/      # Committed benchmark results (one file per machine)
+  site/               # Static dashboard (deployed to GitHub Pages)
+  .github/workflows/  # CI: build + deploy dashboard on merge
 ```
 
 ### How It Works

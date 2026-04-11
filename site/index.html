@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU Bench — Dashboard</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="header">
+    <h1>WebGPU Bench</h1>
+    <div class="header-links">
+      <a href="methodology.html">Methodology</a>
+      <a href="https://github.com/abhijitramesh/webgpu-bench" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+
+  <div id="loading">Loading benchmark data...</div>
+
+  <div id="dashboard" style="display: none;">
+    <!-- Filters -->
+    <div class="filter-bar">
+      <select id="filter-machine"></select>
+      <select id="filter-browser"></select>
+      <select id="filter-model"></select>
+      <select id="filter-status"></select>
+      <div class="quant-dropdown" id="quant-dropdown">
+        <button class="quant-dropdown-btn" id="quant-dropdown-btn" type="button">All Quants</button>
+        <div class="quant-dropdown-list" id="quant-options"></div>
+      </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="summary-cards">
+      <div class="card summary-card">
+        <div class="label">Machines Tested</div>
+        <div class="value" id="stat-machines">0</div>
+      </div>
+      <div class="card summary-card">
+        <div class="label">Benchmarks</div>
+        <div class="value" id="stat-benchmarks">0</div>
+      </div>
+      <div class="card summary-card">
+        <div class="label">Pass Rate</div>
+        <div class="value" id="stat-pass-rate">0%</div>
+      </div>
+    </div>
+
+    <!-- Results Table -->
+    <div class="section">
+      <h2>Results</h2>
+      <div class="results-wrapper" id="results-table"></div>
+    </div>
+
+    <!-- Performance Charts -->
+    <div class="section">
+      <h2>Performance</h2>
+      <div class="charts-grid">
+        <div class="chart-box"><canvas id="chart-decode"></canvas></div>
+        <div class="chart-box"><canvas id="chart-prefill"></canvas></div>
+        <div class="chart-box"><canvas id="chart-size"></canvas></div>
+        <div class="chart-box" id="machine-chart-section"><canvas id="chart-machine"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Error Analysis -->
+    <div class="section">
+      <h2>Error Analysis</h2>
+      <div id="error-table"></div>
+    </div>
+
+    <!-- Machines -->
+    <div class="section">
+      <h2>Machines</h2>
+      <div id="machine-info"></div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
