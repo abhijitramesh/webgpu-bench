@@ -3,79 +3,173 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebGPU Bench — Dashboard</title>
+  <meta name="color-scheme" content="dark">
+  <title>WebGPU Bench</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <div class="header">
-    <h1>WebGPU Bench</h1>
-    <div class="header-links">
-      <a href="methodology.html">Methodology</a>
-      <a href="https://github.com/abhijitramesh/webgpu-bench" target="_blank" rel="noopener">GitHub</a>
+  <header class="header">
+    <div class="header-inner">
+      <a href="/" class="header-brand">
+        <svg class="header-logo" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+        <span class="header-title">WebGPU Bench</span>
+      </a>
+      <nav class="header-nav">
+        <a href="methodology.html" class="header-link">Methodology</a>
+        <a href="https://github.com/abhijitramesh/webgpu-bench" target="_blank" rel="noopener" class="header-link">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5 1 .11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.02 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.82.58C20.57 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </nav>
     </div>
-  </div>
+  </header>
 
-  <div id="loading">Loading benchmark data...</div>
-
-  <div id="dashboard" style="display: none;">
-    <!-- Filters -->
-    <div class="filter-bar">
-      <select id="filter-machine"></select>
-      <select id="filter-browser"></select>
-      <select id="filter-model"></select>
-      <select id="filter-status"></select>
-      <div class="quant-dropdown" id="quant-dropdown">
-        <button class="quant-dropdown-btn" id="quant-dropdown-btn" type="button">All Quants</button>
-        <div class="quant-dropdown-list" id="quant-options"></div>
+  <main>
+    <div id="loading" class="loading-state">
+      <div class="loading-content">
+        <div class="loading-spinner"></div>
+        <p>Loading benchmark data...</p>
       </div>
     </div>
 
-    <!-- Summary -->
-    <div class="summary-cards">
-      <div class="card summary-card">
-        <div class="label">Machines Tested</div>
-        <div class="value" id="stat-machines">0</div>
+    <div id="dashboard" style="display: none;">
+      <!-- Filter Bar -->
+      <div class="filter-bar">
+        <div class="filter-bar-inner">
+          <div class="filter-group">
+            <label class="filter-label" for="filter-machine">Machine</label>
+            <select id="filter-machine" class="filter-select"></select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="filter-browser">Browser</label>
+            <select id="filter-browser" class="filter-select"></select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="filter-model">Model</label>
+            <select id="filter-model" class="filter-select"></select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="filter-status">Status</label>
+            <select id="filter-status" class="filter-select"></select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label">Quantization</label>
+            <div class="quant-dropdown" id="quant-dropdown">
+              <button class="quant-dropdown-btn" id="quant-dropdown-btn" type="button">
+                <span id="quant-dropdown-text">All Quants</span>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <div class="quant-dropdown-list" id="quant-options"></div>
+            </div>
+          </div>
+          <div class="filter-actions">
+            <button class="filter-reset-btn" id="filter-reset" type="button" style="display: none;" title="Reset all filters">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              Reset
+            </button>
+          </div>
+        </div>
       </div>
-      <div class="card summary-card">
-        <div class="label">Benchmarks</div>
-        <div class="value" id="stat-benchmarks">0</div>
-      </div>
-      <div class="card summary-card">
-        <div class="label">Pass Rate</div>
-        <div class="value" id="stat-pass-rate">0%</div>
-      </div>
-    </div>
 
-    <!-- Results Table -->
-    <div class="section">
-      <h2>Results</h2>
-      <div class="results-wrapper" id="results-table"></div>
-    </div>
+      <!-- Section Navigation -->
+      <nav class="section-nav" id="section-nav">
+        <div class="section-nav-track">
+          <button class="section-nav-item active" data-section="overview">Overview</button>
+          <button class="section-nav-item" data-section="results-section">Results</button>
+          <button class="section-nav-item" data-section="performance-section">Performance</button>
+          <button class="section-nav-item" data-section="errors-section">Errors</button>
+          <button class="section-nav-item" data-section="machines-section">Machines</button>
+        </div>
+      </nav>
 
-    <!-- Performance Charts -->
-    <div class="section">
-      <h2>Performance</h2>
-      <div class="charts-grid">
-        <div class="chart-box"><canvas id="chart-decode"></canvas></div>
-        <div class="chart-box"><canvas id="chart-prefill"></canvas></div>
-        <div class="chart-box"><canvas id="chart-size"></canvas></div>
-        <div class="chart-box" id="machine-chart-section"><canvas id="chart-machine"></canvas></div>
-      </div>
-    </div>
+      <!-- Overview -->
+      <section id="overview" class="dash-section">
+        <div class="container">
+          <div class="summary-grid">
+            <div class="stat-card">
+              <div class="stat-card-icon stat-card-icon--machines">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+              </div>
+              <div class="stat-card-content">
+                <span class="stat-card-label">Machines Tested</span>
+                <span class="stat-card-value" id="stat-machines">0</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-card-icon stat-card-icon--benchmarks">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              </div>
+              <div class="stat-card-content">
+                <span class="stat-card-label">Benchmarks</span>
+                <span class="stat-card-value" id="stat-benchmarks">0</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-card-icon stat-card-icon--pass">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              </div>
+              <div class="stat-card-content">
+                <span class="stat-card-label">Pass Rate</span>
+                <span class="stat-card-value" id="stat-pass-rate">0%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-    <!-- Error Analysis -->
-    <div class="section">
-      <h2>Error Analysis</h2>
-      <div id="error-table"></div>
-    </div>
+      <!-- Results -->
+      <section id="results-section" class="dash-section">
+        <div class="container">
+          <div class="section-header">
+            <h2>Results</h2>
+            <span class="results-count" id="results-count"></span>
+          </div>
+          <div class="table-card">
+            <div class="results-wrapper" id="results-table"></div>
+          </div>
+        </div>
+      </section>
 
-    <!-- Machines -->
-    <div class="section">
-      <h2>Machines</h2>
-      <div id="machine-info"></div>
+      <!-- Performance Charts -->
+      <section id="performance-section" class="dash-section">
+        <div class="container">
+          <div class="section-header">
+            <h2>Performance</h2>
+          </div>
+          <div class="charts-grid">
+            <div class="chart-box"><canvas id="chart-decode"></canvas></div>
+            <div class="chart-box"><canvas id="chart-prefill"></canvas></div>
+            <div class="chart-box"><canvas id="chart-size"></canvas></div>
+            <div class="chart-box" id="machine-chart-section"><canvas id="chart-machine"></canvas></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Error Analysis -->
+      <section id="errors-section" class="dash-section">
+        <div class="container">
+          <div class="section-header">
+            <h2>Error Analysis</h2>
+          </div>
+          <div id="error-table"></div>
+        </div>
+      </section>
+
+      <!-- Machines -->
+      <section id="machines-section" class="dash-section">
+        <div class="container">
+          <div class="section-header">
+            <h2>Machines</h2>
+          </div>
+          <div id="machine-info"></div>
+        </div>
+      </section>
     </div>
-  </div>
+  </main>
 
   <script type="module" src="js/app.js"></script>
 </body>

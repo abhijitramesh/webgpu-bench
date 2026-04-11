@@ -1,10 +1,10 @@
 export const BROWSER_COLORS = {
-  chromium: '#4285f4',
-  firefox: '#ff7139',
-  webkit: '#006cff',
+  chromium: '#60a5fa',
+  firefox: '#fb923c',
+  webkit: '#a78bfa',
 };
 
-// Quantization types sorted by approximate bit-width (low → high)
+// Quantization types sorted by approximate bit-width (low -> high)
 export const QUANT_ORDER = [
   'IQ1_S', 'IQ1_M',
   'IQ2_XXS', 'IQ2_XS', 'IQ2_S', 'IQ2_M', 'Q2_K', 'Q2_K_S',
@@ -24,12 +24,12 @@ export function quantSortKey(q) {
 }
 
 export function formatTokS(v) {
-  if (v == null || isNaN(v)) return '—';
+  if (v == null || isNaN(v)) return '\u2014';
   return v.toFixed(1);
 }
 
 export function formatMs(v) {
-  if (v == null || isNaN(v)) return '—';
+  if (v == null || isNaN(v)) return '\u2014';
   return v.toFixed(1);
 }
 

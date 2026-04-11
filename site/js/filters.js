@@ -54,15 +54,8 @@ export function initFilters(meta, onChangeCallback) {
 }
 
 function initQuantMultiSelect(meta) {
-  const allQuants = new Set();
-  // We'll collect quants from the meta if available, or use QUANT_ORDER
-  // Since meta doesn't list quants, we build from known QUANT_ORDER
-  // and only show ones that appear in the data
-  // For now, we'll populate after data loads — store ref for later
-
   const btn = document.getElementById('quant-dropdown-btn');
   const dropdown = document.getElementById('quant-dropdown');
-  const list = document.getElementById('quant-options');
 
   // Toggle dropdown
   btn.addEventListener('click', (e) => {
@@ -134,28 +127,18 @@ function updateQuantSelection(checkboxes, selectAllCb) {
   for (const cb of checkboxes) {
     if (cb.checked) {
       checkedCount++;
-    } else {
-      // We track unchecked - but actually we track checked as the selected set
     }
   }
 
-  // If all are checked, selectedQuants stays empty (meaning "all")
   if (checkedCount === checkboxes.length) {
     selectedQuants = new Set();
     selectAllCb.checked = true;
     selectAllCb.indeterminate = false;
   } else if (checkedCount === 0) {
-    // None checked — show nothing
-    for (const cb of checkboxes) {
-      selectedQuants.add(cb.value); // trick: add none, keep empty
-    }
-    selectedQuants = new Set(); // empty set but we need a way to show "none"
-    // Actually: if none checked, we want no results. Use a sentinel.
     selectedQuants = new Set(['__none__']);
     selectAllCb.checked = false;
     selectAllCb.indeterminate = false;
   } else {
-    // Some checked — selectedQuants = only checked ones
     selectedQuants = new Set();
     for (const cb of checkboxes) {
       if (cb.checked) selectedQuants.add(cb.value);
@@ -168,18 +151,41 @@ function updateQuantSelection(checkboxes, selectAllCb) {
 }
 
 function updateQuantButtonText(checked, total) {
-  const btn = document.getElementById('quant-dropdown-btn');
+  const textEl = document.getElementById('quant-dropdown-text');
+  if (!textEl) return;
   if (checked === total) {
-    btn.textContent = 'All Quants';
+    textEl.textContent = 'All Quants';
   } else if (checked === 0) {
-    btn.textContent = 'No Quants';
+    textEl.textContent = 'No Quants';
   } else {
-    btn.textContent = `${checked}/${total} Quants`;
+    textEl.textContent = `${checked}/${total} Quants`;
   }
 }
 
 function fireChange() {
   if (onChange) onChange(getFilters());
+}
+
+export function resetFilters() {
+  // Reset all select dropdowns
+  document.getElementById('filter-machine').value = 'all';
+  document.getElementById('filter-browser').value = 'all';
+  document.getElementById('filter-model').value = 'all';
+  document.getElementById('filter-status').value = 'all';
+
+  // Reset quant checkboxes
+  const selectAllCb = document.getElementById('quant-select-all');
+  const checkboxes = [...document.querySelectorAll('#quant-options .quant-cb')];
+
+  if (selectAllCb) {
+    selectAllCb.checked = true;
+    selectAllCb.indeterminate = false;
+  }
+  for (const cb of checkboxes) cb.checked = true;
+
+  // Reset internal state
+  selectedQuants = new Set();
+  updateQuantButtonText(checkboxes.length, checkboxes.length);
 }
 
 export function getFilters() {

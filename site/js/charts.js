@@ -1,5 +1,19 @@
 import { BROWSER_COLORS, quantSortKey, groupBy, formatTokS } from './utils.js';
 
+// Global Chart.js theme
+Chart.defaults.font.family = "'Manrope', system-ui, -apple-system, sans-serif";
+Chart.defaults.color = '#a1a1aa';
+Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(15, 15, 18, 0.95)';
+Chart.defaults.plugins.tooltip.borderColor = '#27272a';
+Chart.defaults.plugins.tooltip.borderWidth = 1;
+Chart.defaults.plugins.tooltip.cornerRadius = 8;
+Chart.defaults.plugins.tooltip.padding = { top: 8, bottom: 8, left: 12, right: 12 };
+Chart.defaults.plugins.tooltip.titleFont = { weight: '600', size: 13 };
+Chart.defaults.plugins.tooltip.bodyFont = { family: "'JetBrains Mono', monospace", size: 12 };
+Chart.defaults.plugins.legend.labels.boxWidth = 12;
+Chart.defaults.plugins.legend.labels.boxHeight = 12;
+Chart.defaults.plugins.legend.labels.padding = 16;
+
 const chartInstances = new Map();
 
 function destroyChart(id) {
@@ -9,8 +23,9 @@ function destroyChart(id) {
   }
 }
 
-const DARK_GRID = 'rgba(255,255,255,0.1)';
-const DARK_TEXT = '#ccc';
+const DARK_GRID = 'rgba(255,255,255,0.06)';
+const DARK_TEXT = '#a1a1aa';
+const TITLE_TEXT = '#e4e4e7';
 
 function darkScales(xTitle, yTitle) {
   return {
@@ -29,7 +44,11 @@ function darkScales(xTitle, yTitle) {
 }
 
 function darkLegend() {
-  return { labels: { color: DARK_TEXT } };
+  return { labels: { color: DARK_TEXT, usePointStyle: true, pointStyle: 'circle' } };
+}
+
+function titleConfig(text) {
+  return { display: true, text, color: TITLE_TEXT, font: { size: 14, weight: '600' } };
 }
 
 export function renderDecodeChart(results) {
@@ -73,7 +92,7 @@ export function renderDecodeChart(results) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        title: { display: true, text: 'Decode Throughput by Quantization', color: DARK_TEXT },
+        title: titleConfig('Decode Throughput by Quantization'),
         legend: darkLegend(),
         tooltip: {
           callbacks: { label: ctx => `${ctx.dataset.label}: ${formatTokS(ctx.raw)} tok/s` },
@@ -125,7 +144,7 @@ export function renderPrefillChart(results) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        title: { display: true, text: 'Prefill Throughput by Quantization', color: DARK_TEXT },
+        title: titleConfig('Prefill Throughput by Quantization'),
         legend: darkLegend(),
         tooltip: {
           callbacks: { label: ctx => `${ctx.dataset.label}: ${formatTokS(ctx.raw)} tok/s` },
@@ -175,11 +194,11 @@ export function renderSizeChart(results) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        title: { display: true, text: 'Throughput vs Model Size', color: DARK_TEXT },
+        title: titleConfig('Throughput vs Model Size'),
         legend: darkLegend(),
         tooltip: {
           callbacks: {
-            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.x}MB → ${formatTokS(ctx.parsed.y)} tok/s`,
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.x}MB \u2192 ${formatTokS(ctx.parsed.y)} tok/s`,
           },
         },
       },
@@ -202,7 +221,6 @@ export function renderMachineChart(results, machines) {
   container.style.display = '';
 
   const passed = results.filter(r => r.status === 'done' && r.decode_tok_s != null);
-  // Use Q4_K_M as default comparison quant, fall back to most common
   const quantCounts = {};
   for (const r of passed) quantCounts[r.variant] = (quantCounts[r.variant] || 0) + 1;
   const targetQuant = quantCounts['Q4_K_M'] ? 'Q4_K_M' : Object.keys(quantCounts).sort((a, b) => quantCounts[b] - quantCounts[a])[0];
@@ -235,7 +253,7 @@ export function renderMachineChart(results, machines) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        title: { display: true, text: `Machine Comparison (${targetQuant})`, color: DARK_TEXT },
+        title: titleConfig(`Machine Comparison (${targetQuant})`),
         legend: darkLegend(),
         tooltip: {
           callbacks: { label: ctx => `${ctx.dataset.label}: ${formatTokS(ctx.raw)} tok/s` },
