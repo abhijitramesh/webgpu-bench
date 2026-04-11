@@ -112,7 +112,7 @@ window.addEventListener('unhandledrejection', (e) => {
     setStatus('downloading', `Downloading ${modelFile}...`);
     log(`Downloading: https://huggingface.co/${hfRepo}/resolve/main/${modelFile}`);
 
-    const modelUrl = `https://huggingface.co/${hfRepo}/resolve/main/${modelFile}`;
+    const modelUrl = `/models/${hfRepo}/${modelFile}`;
     const response = await fetch(modelUrl);
     if (!response.ok) {
       throw new Error(`Download failed: ${response.status} ${response.statusText}`);

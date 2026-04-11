@@ -376,36 +376,32 @@ async function main() {
     const launchOpts = getBrowserLaunchArgs(browserName);
 
     if (config.CONSISTENCY) {
-      // Consistency baselines need a long-lived browser — use a dedicated instance
-      let baselineBrowser;
-      try {
-        baselineBrowser = await browserType.launch(launchOpts);
-      } catch (err) {
-        console.error(`Failed to launch ${browserName} for baselines: ${err.message}`);
-        continue;
+      // Skip browser launch if all baselines are already cached (shared across browsers)
+      const baselineKey = config.BROWSERS.length > 1 ? 'cpu' : browserName;
+      const cached = cpuBaselines[baselineKey] || {};
+      const needsCollection = config.MODEL_VARIANTS.some(v => !(v.filename in cached));
+
+      if (needsCollection) {
+        let baselineBrowser;
+        try {
+          baselineBrowser = await browserType.launch(launchOpts);
+        } catch (err) {
+          console.error(`Failed to launch ${browserName} for baselines: ${err.message}`);
+          continue;
+        }
+        await collectMissingBaselines(
+          browserName,
+          config.MODEL_VARIANTS,
+          (variant, nGpuLayers) => runBenchmark(baselineBrowser, variant, serverUrl, nGpuLayers),
+          cpuBaselines,
+        );
+        await baselineBrowser.close();
+      } else {
+        console.log(`  CPU baselines: all ${config.MODEL_VARIANTS.length} cached (shared)`);
       }
-      await collectMissingBaselines(
-        browserName,
-        config.MODEL_VARIANTS,
-        (variant, nGpuLayers) => runBenchmark(baselineBrowser, variant, serverUrl, nGpuLayers),
-        cpuBaselines,
-      );
-      await baselineBrowser.close();
     }
 
-    // Get GPU info once with a short-lived browser
     let gpuInfo = null;
-    try {
-      const tmpBrowser = await browserType.launch(launchOpts);
-      const ctx = await tmpBrowser.newContext();
-      const page = await ctx.newPage();
-      await page.goto(serverUrl + '/harness.html', { timeout: 10_000 });
-      gpuInfo = await getGpuInfo(page);
-      await ctx.close();
-      await tmpBrowser.close();
-    } catch {
-      console.warn('  Could not get GPU info');
-    }
 
     for (let i = 0; i < config.MODEL_VARIANTS.length; i++) {
       const variant = config.MODEL_VARIANTS[i];
@@ -437,7 +433,7 @@ async function main() {
           error: `Browser launch failed: ${err.message}`,
           buildType: 'unknown',
           webgpuAvailable: false,
-          gpuAdapterInfo: gpuInfo?.info || null,
+          gpuAdapterInfo: gpuInfo || null,
           nGpuLayers: config.N_GPU_LAYERS,
           nCtx: config.N_CTX,
           nPredict: config.N_PREDICT,
@@ -479,7 +475,7 @@ async function main() {
         error: bench.error || null,
         buildType: bench.buildType || 'unknown',
         webgpuAvailable: bench.webgpuAvailable || false,
-        gpuAdapterInfo: bench.gpuAdapterInfo || gpuInfo?.info || null,
+        gpuAdapterInfo: bench.gpuAdapterInfo || gpuInfo || null,
         nGpuLayers: config.N_GPU_LAYERS,
         nCtx: config.N_CTX,
         nPredict: config.N_PREDICT,
@@ -491,6 +487,8 @@ async function main() {
       };
 
       allResults.push(result);
+
+      if (!gpuInfo && bench.gpuAdapterInfo) gpuInfo = bench.gpuAdapterInfo;
 
       if (bench.status === 'done' && bench.metrics) {
         const m = bench.metrics;

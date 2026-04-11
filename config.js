@@ -82,6 +82,9 @@ export function getConfig() {
 
   const browsers = args.browsers || ['chromium', 'firefox', 'webkit'];
 
+  // Sort smallest first for faster feedback and early error detection
+  variants.sort((a, b) => a.sizeMB - b.sizeMB);
+
   return {
     PORT: 3000,
     RESULTS_DIR: path.join(__dirname, 'results'),

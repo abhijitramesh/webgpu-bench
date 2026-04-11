@@ -1,6 +1,9 @@
 # Build output
 build/
 
+# Model download cache
+cache/
+
 # Dependencies
 node_modules/
 
