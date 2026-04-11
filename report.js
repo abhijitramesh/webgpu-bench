@@ -21,7 +21,7 @@ function main() {
 
   // Generate CSV
   const csvHeader = [
-    'browser', 'variant', 'size_mb', 'status', 'webgpu_available',
+    'browser', 'model', 'variant', 'size_mb', 'status', 'webgpu_available',
     'n_gpu_layers', 'prefill_tok_s', 'decode_tok_s',
     'n_p_eval', 't_p_eval_ms', 'n_eval', 't_eval_ms',
     'wall_time_s', 'error',
@@ -33,6 +33,7 @@ function main() {
     const c = r.consistency;
     return [
       r.browser,
+      r.model || '',
       r.variant,
       r.sizeMB,
       r.status,
@@ -60,12 +61,14 @@ function main() {
   fs.writeFileSync(csvFile, csv);
   console.log(`CSV written to ${csvFile}`);
 
-  // Generate summary grouped by browser
+  // Generate summary grouped by browser, then model
   const summary = {};
   for (const r of results) {
-    if (!summary[r.browser]) summary[r.browser] = { passed: [], failed: [] };
+    const model = r.model || 'unknown';
+    if (!summary[r.browser]) summary[r.browser] = {};
+    if (!summary[r.browser][model]) summary[r.browser][model] = { passed: [], failed: [] };
     if (r.status === 'done') {
-      summary[r.browser].passed.push({
+      summary[r.browser][model].passed.push({
         variant: r.variant,
         prefill_tok_s: r.metrics?.prefill_tok_s,
         decode_tok_s: r.metrics?.decode_tok_s,
@@ -73,7 +76,7 @@ function main() {
         consistency: r.consistency ?? null,
       });
     } else {
-      summary[r.browser].failed.push({
+      summary[r.browser][model].failed.push({
         variant: r.variant,
         error: r.error,
       });
@@ -92,44 +95,49 @@ function main() {
   for (const browser of Object.keys(summary)) {
     console.log(`=== ${browser} ===`);
 
-    if (summary[browser].passed.length > 0) {
-      console.log('  Passed:');
-      if (hasConsistency) {
-        console.log('  ' + 'Variant'.padEnd(16) + 'Prefill (tok/s)'.padEnd(18) + 'Decode (tok/s)'.padEnd(18) + 'Wall (s)'.padEnd(12) + 'CPU match');
-        console.log('  ' + '-'.repeat(80));
-        for (const r of summary[browser].passed) {
-          const c = r.consistency;
-          const matchLabel = c == null ? 'no baseline'
-            : c.agreement_rate === 1.0 ? '100% top-1'
-            : `${(c.agreement_rate * 100).toFixed(1)}% top-1 (diverge@${c.first_disagreement})`;
-          console.log(
-            '  ' +
-            r.variant.padEnd(16) +
-            String(r.prefill_tok_s || 'N/A').padEnd(18) +
-            String(r.decode_tok_s || 'N/A').padEnd(18) +
-            r.wall_time_s.padEnd(12) +
-            matchLabel
-          );
-        }
-      } else {
-        console.log('  ' + 'Variant'.padEnd(16) + 'Prefill (tok/s)'.padEnd(18) + 'Decode (tok/s)'.padEnd(18) + 'Wall (s)');
-        console.log('  ' + '-'.repeat(66));
-        for (const r of summary[browser].passed) {
-          console.log(
-            '  ' +
-            r.variant.padEnd(16) +
-            String(r.prefill_tok_s || 'N/A').padEnd(18) +
-            String(r.decode_tok_s || 'N/A').padEnd(18) +
-            r.wall_time_s
-          );
+    for (const model of Object.keys(summary[browser])) {
+      const modelData = summary[browser][model];
+      console.log(`  --- ${model} ---`);
+
+      if (modelData.passed.length > 0) {
+        console.log('    Passed:');
+        if (hasConsistency) {
+          console.log('    ' + 'Variant'.padEnd(16) + 'Prefill (tok/s)'.padEnd(18) + 'Decode (tok/s)'.padEnd(18) + 'Wall (s)'.padEnd(12) + 'CPU match');
+          console.log('    ' + '-'.repeat(80));
+          for (const r of modelData.passed) {
+            const c = r.consistency;
+            const matchLabel = c == null ? 'no baseline'
+              : c.agreement_rate === 1.0 ? '100% top-1'
+              : `${(c.agreement_rate * 100).toFixed(1)}% top-1 (diverge@${c.first_disagreement})`;
+            console.log(
+              '    ' +
+              r.variant.padEnd(16) +
+              String(r.prefill_tok_s || 'N/A').padEnd(18) +
+              String(r.decode_tok_s || 'N/A').padEnd(18) +
+              r.wall_time_s.padEnd(12) +
+              matchLabel
+            );
+          }
+        } else {
+          console.log('    ' + 'Variant'.padEnd(16) + 'Prefill (tok/s)'.padEnd(18) + 'Decode (tok/s)'.padEnd(18) + 'Wall (s)');
+          console.log('    ' + '-'.repeat(66));
+          for (const r of modelData.passed) {
+            console.log(
+              '    ' +
+              r.variant.padEnd(16) +
+              String(r.prefill_tok_s || 'N/A').padEnd(18) +
+              String(r.decode_tok_s || 'N/A').padEnd(18) +
+              r.wall_time_s
+            );
+          }
         }
       }
-    }
 
-    if (summary[browser].failed.length > 0) {
-      console.log('  Failed:');
-      for (const r of summary[browser].failed) {
-        console.log(`    ${r.variant}: ${r.error}`);
+      if (modelData.failed.length > 0) {
+        console.log('    Failed:');
+        for (const r of modelData.failed) {
+          console.log(`      ${r.variant}: ${r.error}`);
+        }
       }
     }
     console.log('');

@@ -121,33 +121,32 @@ window.addEventListener('unhandledrejection', (e) => {
     const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
     log(`Model size: ${(contentLength / (1024 * 1024)).toFixed(1)} MB`);
 
-    // Stream download with progress
+    // Stream download directly to Emscripten FS to avoid holding the full
+    // model in JS memory (previously 3x: chunks[] + concat + MEMFS copy).
     const reader = response.body.getReader();
-    const chunks = [];
     let downloaded = 0;
+
+    // Pre-allocate the file to the expected size so MEMFS doesn't reallocate
+    // on every chunk write.
+    if (contentLength > 0) {
+      Module.FS.writeFile('/model.gguf', new Uint8Array(0));
+      Module.FS.truncate('/model.gguf', contentLength);
+    }
+
+    const stream = Module.FS.open('/model.gguf', 'w');
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      chunks.push(value);
+      Module.FS.write(stream, value, 0, value.length, downloaded);
       downloaded += value.length;
       const pct = contentLength ? ((downloaded / contentLength) * 100).toFixed(1) : '?';
       window.__BENCH.downloadProgress = contentLength ? downloaded / contentLength : 0;
       progressEl.textContent = `Downloaded: ${(downloaded / (1024 * 1024)).toFixed(1)} MB / ${(contentLength / (1024 * 1024)).toFixed(1)} MB (${pct}%)`;
     }
 
-    // Concatenate chunks and write to Emscripten FS
-    const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
-    const modelData = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      modelData.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    log(`Writing ${(totalLength / (1024 * 1024)).toFixed(1)} MB to virtual FS...`);
-    Module.FS.writeFile('/model.gguf', modelData);
-    log('Model written to /model.gguf');
+    Module.FS.close(stream);
+    log(`Model written to /model.gguf (${(downloaded / (1024 * 1024)).toFixed(1)} MB)`);
 
     // Initialize backend
     // Note: {async: true} is required for JSPI-exported functions
@@ -171,6 +170,15 @@ window.addEventListener('unhandledrejection', (e) => {
       throw new Error(`bench_load failed: ${loadResult}`);
     }
     log('Model loaded');
+
+    // Free the MEMFS copy — llama.cpp has already loaded the model into
+    // WASM heap memory, so keeping the file wastes an extra ~X MB.
+    try {
+      Module.FS.unlink('/model.gguf');
+      log('Freed model file from virtual FS');
+    } catch (e) {
+      log(`Warning: could not remove model file from FS: ${e.message}`);
+    }
 
     // Run inference
     setStatus('running', 'Running inference...');

@@ -213,6 +213,26 @@ async function collectMissingBaselines(browserName, variants, runFn, baselines) 
   }
 }
 
+// Load previous results for resume mode
+function loadPreviousResults() {
+  const file = path.join(config.RESULTS_DIR, 'results.json');
+  if (fs.existsSync(file)) {
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf-8'));
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+// Check if a browser+variant combo already has a successful result
+function alreadyCompleted(previousResults, browserName, filename) {
+  return previousResults.some(
+    r => r.browser === browserName && r.filename === filename && r.status === 'done'
+  );
+}
+
 // Main
 async function main() {
   console.log('=== WebGPU LLM Benchmark Runner ===');
@@ -221,6 +241,7 @@ async function main() {
   console.log(`Machine:  ${config.MACHINE.platform}/${config.MACHINE.arch} - ${config.MACHINE.cpus}`);
   console.log(`GPU layers: ${config.N_GPU_LAYERS}`);
   if (config.CONSISTENCY) console.log('Consistency mode: ON (CPU baselines will be collected per browser)');
+  if (config.RESUME) console.log('Resume mode: ON (skipping already-succeeded benchmarks)');
   console.log('');
 
   // Ensure results dir exists
@@ -233,7 +254,16 @@ async function main() {
   // Load persisted CPU baselines (allows resuming after crash)
   const cpuBaselines = config.CONSISTENCY ? loadCpuBaselines() : {};
 
-  const allResults = [];
+  // Resume mode: load previous results, keep only successful ones, re-run failures
+  const previousResults = config.RESUME ? loadPreviousResults() : [];
+  const allResults = config.RESUME
+    ? previousResults.filter(r => r.status === 'done')  // drop failed results so they get retried
+    : [];
+  if (config.RESUME && previousResults.length > 0) {
+    const doneCount = allResults.length;
+    const failedCount = previousResults.length - doneCount;
+    console.log(`Resuming: ${doneCount} succeeded (kept), ${failedCount} failed (will retry)`);
+  }
   const timestamp = new Date().toISOString();
 
   for (const browserName of config.BROWSERS) {
@@ -262,6 +292,13 @@ async function main() {
       for (let i = 0; i < config.MODEL_VARIANTS.length; i++) {
         const variant = config.MODEL_VARIANTS[i];
         const progress = `[${i + 1}/${config.MODEL_VARIANTS.length}]`;
+
+        // Resume: skip already-succeeded benchmarks
+        if (config.RESUME && alreadyCompleted(previousResults, browserName, variant.filename)) {
+          console.log(`  ${progress} ${variant.name} — skipped (already done)`);
+          continue;
+        }
+
         console.log(`  ${progress} ${variant.name} (${variant.sizeMB} MB)...`);
 
         const refTokenIds = config.CONSISTENCY
@@ -316,34 +353,39 @@ async function main() {
     }
 
     // Chromium / Firefox via Playwright
+    // Launch a fresh browser for each variant to prevent WASM memory from
+    // accumulating across runs (Firefox is especially prone to OOM otherwise).
     const browserType = getBrowserType(browserName);
     const launchOpts = getBrowserLaunchArgs(browserName);
 
-    let browser;
-    try {
-      browser = await browserType.launch(launchOpts);
-    } catch (err) {
-      console.error(`Failed to launch ${browserName}: ${err.message}`);
-      continue;
-    }
-
     if (config.CONSISTENCY) {
+      // Consistency baselines need a long-lived browser — use a dedicated instance
+      let baselineBrowser;
+      try {
+        baselineBrowser = await browserType.launch(launchOpts);
+      } catch (err) {
+        console.error(`Failed to launch ${browserName} for baselines: ${err.message}`);
+        continue;
+      }
       await collectMissingBaselines(
         browserName,
         config.MODEL_VARIANTS,
-        (variant, nGpuLayers) => runBenchmark(browser, variant, serverUrl, nGpuLayers),
+        (variant, nGpuLayers) => runBenchmark(baselineBrowser, variant, serverUrl, nGpuLayers),
         cpuBaselines,
       );
+      await baselineBrowser.close();
     }
 
-    // Get GPU info once per browser
+    // Get GPU info once with a short-lived browser
     let gpuInfo = null;
     try {
-      const ctx = await browser.newContext();
+      const tmpBrowser = await browserType.launch(launchOpts);
+      const ctx = await tmpBrowser.newContext();
       const page = await ctx.newPage();
       await page.goto(serverUrl + '/harness.html', { timeout: 10_000 });
       gpuInfo = await getGpuInfo(page);
       await ctx.close();
+      await tmpBrowser.close();
     } catch {
       console.warn('  Could not get GPU info');
     }
@@ -351,7 +393,48 @@ async function main() {
     for (let i = 0; i < config.MODEL_VARIANTS.length; i++) {
       const variant = config.MODEL_VARIANTS[i];
       const progress = `[${i + 1}/${config.MODEL_VARIANTS.length}]`;
+
+      // Resume: skip already-succeeded benchmarks
+      if (config.RESUME && alreadyCompleted(previousResults, browserName, variant.filename)) {
+        console.log(`  ${progress} ${variant.name} — skipped (already done)`);
+        continue;
+      }
+
       console.log(`  ${progress} ${variant.name} (${variant.sizeMB} MB)...`);
+
+      // Launch a fresh browser for each variant to avoid OOM from WASM memory leaks
+      let browser;
+      try {
+        browser = await browserType.launch(launchOpts);
+      } catch (err) {
+        console.error(`    Failed to launch ${browserName}: ${err.message}`);
+        const result = {
+          timestamp,
+          browser: browserName,
+          model: variant.modelName,
+          repo: variant.repo,
+          variant: variant.name,
+          filename: variant.filename,
+          sizeMB: variant.sizeMB,
+          status: 'error',
+          error: `Browser launch failed: ${err.message}`,
+          buildType: 'unknown',
+          webgpuAvailable: false,
+          gpuAdapterInfo: gpuInfo?.info || null,
+          nGpuLayers: config.N_GPU_LAYERS,
+          nCtx: config.N_CTX,
+          nPredict: config.N_PREDICT,
+          wallTimeMs: 0,
+          metrics: null,
+          output: '',
+          machine: config.MACHINE,
+          consistency: null,
+        };
+        allResults.push(result);
+        const intermediateFile = path.join(config.RESULTS_DIR, 'results.json');
+        fs.writeFileSync(intermediateFile, JSON.stringify(allResults, null, 2));
+        continue;
+      }
 
       const refTokenIds = config.CONSISTENCY
         ? tokenIdsToCsv(cpuBaselines[browserName]?.[variant.filename])
@@ -360,6 +443,9 @@ async function main() {
       const startTime = Date.now();
       const { bench } = await runBenchmark(browser, variant, serverUrl, config.N_GPU_LAYERS, refTokenIds);
       const wallTimeMs = Date.now() - startTime;
+
+      // Close browser immediately to free WASM memory before next variant
+      await browser.close();
 
       // consistency is set by harness.js via bench_eval_tokens (forced decoding)
       const consistency = bench.consistency ?? null;
@@ -401,8 +487,6 @@ async function main() {
       const intermediateFile = path.join(config.RESULTS_DIR, 'results.json');
       fs.writeFileSync(intermediateFile, JSON.stringify(allResults, null, 2));
     }
-
-    await browser.close();
   }
 
   // Final save

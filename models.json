@@ -32,6 +32,38 @@
         { "quant": "UD-Q6_K_XL", "filename": "Llama-3.2-1B-Instruct-UD-Q6_K_XL.gguf", "sizeMB": 1219 },
         { "quant": "UD-Q8_K_XL", "filename": "Llama-3.2-1B-Instruct-UD-Q8_K_XL.gguf", "sizeMB": 1884 }
       ]
+    },
+    {
+      "repo": "unsloth/Ministral-3-3B-Instruct-2512-GGUF",
+      "name": "Ministral-3-3B-Instruct-2512",
+      "variants": [
+        { "quant": "Q2_K",       "filename": "Ministral-3-3B-Instruct-2512-Q2_K.gguf",       "sizeMB": 1460 },
+        { "quant": "Q2_K_L",     "filename": "Ministral-3-3B-Instruct-2512-Q2_K_L.gguf",     "sizeMB": 1460 },
+        { "quant": "Q3_K_S",     "filename": "Ministral-3-3B-Instruct-2512-Q3_K_S.gguf",     "sizeMB": 1640 },
+        { "quant": "Q3_K_M",     "filename": "Ministral-3-3B-Instruct-2512-Q3_K_M.gguf",     "sizeMB": 1800 },
+        { "quant": "Q4_0",       "filename": "Ministral-3-3B-Instruct-2512-Q4_0.gguf",       "sizeMB": 2050 },
+        { "quant": "Q4_1",       "filename": "Ministral-3-3B-Instruct-2512-Q4_1.gguf",       "sizeMB": 2230 },
+        { "quant": "Q4_K_S",     "filename": "Ministral-3-3B-Instruct-2512-Q4_K_S.gguf",     "sizeMB": 2050 },
+        { "quant": "Q4_K_M",     "filename": "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",     "sizeMB": 2150 },
+        { "quant": "Q5_K_S",     "filename": "Ministral-3-3B-Instruct-2512-Q5_K_S.gguf",     "sizeMB": 2420 },
+        { "quant": "Q5_K_M",     "filename": "Ministral-3-3B-Instruct-2512-Q5_K_M.gguf",     "sizeMB": 2470 },
+        { "quant": "Q6_K",       "filename": "Ministral-3-3B-Instruct-2512-Q6_K.gguf",       "sizeMB": 2820 },
+        { "quant": "Q8_0",       "filename": "Ministral-3-3B-Instruct-2512-Q8_0.gguf",       "sizeMB": 3650 },
+        { "quant": "IQ4_XS",     "filename": "Ministral-3-3B-Instruct-2512-IQ4_XS.gguf",     "sizeMB": 1960 },
+        { "quant": "IQ4_NL",     "filename": "Ministral-3-3B-Instruct-2512-IQ4_NL.gguf",     "sizeMB": 2050 },
+        { "quant": "BF16",       "filename": "Ministral-3-3B-Instruct-2512-BF16.gguf",       "sizeMB": 6870 },
+        { "quant": "UD-IQ1_S",   "filename": "Ministral-3-3B-Instruct-2512-UD-IQ1_S.gguf",   "sizeMB": 969  },
+        { "quant": "UD-IQ1_M",   "filename": "Ministral-3-3B-Instruct-2512-UD-IQ1_M.gguf",   "sizeMB": 1020 },
+        { "quant": "UD-IQ2_XXS", "filename": "Ministral-3-3B-Instruct-2512-UD-IQ2_XXS.gguf", "sizeMB": 1110 },
+        { "quant": "UD-IQ2_M",   "filename": "Ministral-3-3B-Instruct-2512-UD-IQ2_M.gguf",   "sizeMB": 1340 },
+        { "quant": "UD-IQ3_XXS", "filename": "Ministral-3-3B-Instruct-2512-UD-IQ3_XXS.gguf", "sizeMB": 1460 },
+        { "quant": "UD-Q2_K_XL", "filename": "Ministral-3-3B-Instruct-2512-UD-Q2_K_XL.gguf", "sizeMB": 1490 },
+        { "quant": "UD-Q3_K_XL", "filename": "Ministral-3-3B-Instruct-2512-UD-Q3_K_XL.gguf", "sizeMB": 1860 },
+        { "quant": "UD-Q4_K_XL", "filename": "Ministral-3-3B-Instruct-2512-UD-Q4_K_XL.gguf", "sizeMB": 2190 },
+        { "quant": "UD-Q5_K_XL", "filename": "Ministral-3-3B-Instruct-2512-UD-Q5_K_XL.gguf", "sizeMB": 2480 },
+        { "quant": "UD-Q6_K_XL", "filename": "Ministral-3-3B-Instruct-2512-UD-Q6_K_XL.gguf", "sizeMB": 3170 },
+        { "quant": "UD-Q8_K_XL", "filename": "Ministral-3-3B-Instruct-2512-UD-Q8_K_XL.gguf", "sizeMB": 4500 }
+      ]
     }
   ],
   "quickVariants": ["Q2_K", "Q4_K_M", "Q8_0"]
