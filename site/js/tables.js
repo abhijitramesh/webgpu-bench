@@ -25,6 +25,7 @@ export function renderResultsTable(results) {
     { key: 'n_p_eval', label: 'n_p_eval' },
     { key: 't_p_eval_ms', label: 't_p_eval (ms)' },
     { key: 'wallTimeMs', label: 'Wall (s)' },
+    { key: 'consistency_rate', label: 'CPU Match' },
     { key: 'error', label: 'Error' },
   ];
 
@@ -58,6 +59,16 @@ export function renderResultsTable(results) {
           break;
         case 'wallTimeMs':
           html += r.wallTimeMs != null ? (r.wallTimeMs / 1000).toFixed(1) : '—';
+          break;
+        case 'consistency_rate':
+          if (r.consistency_rate != null) {
+            const pct = (r.consistency_rate * 100).toFixed(1);
+            const cls = r.consistency_rate >= 0.95 ? 'text-green' : r.consistency_rate >= 0.90 ? '' : 'text-red';
+            const diverge = r.consistency_first_disagree >= 0 ? ` (diverge@${r.consistency_first_disagree})` : '';
+            html += `<span class="${cls}">${pct}%${diverge}</span>`;
+          } else {
+            html += '—';
+          }
           break;
         case 'error':
           if (r.error) {

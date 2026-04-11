@@ -64,6 +64,8 @@ function main() {
         t_p_eval_ms: r.metrics?.t_p_eval_ms ?? null,
         n_eval: r.metrics?.n_eval ?? null,
         t_eval_ms: r.metrics?.t_eval_ms ?? null,
+        consistency_rate: r.consistency?.agreement_rate ?? null,
+        consistency_first_disagree: r.consistency?.first_disagreement ?? null,
       };
 
       allResults.push(flat);

@@ -88,6 +88,13 @@ function tokenIdsToCsv(tokenIds) {
   return Array.isArray(tokenIds) ? tokenIds.join(',') : null;
 }
 
+// Look up CPU baseline for a variant. Uses shared "cpu" key when running
+// multiple browsers, falls back to browser-specific key for backwards compat.
+function getBaselineTokenIds(baselines, browserName, filename) {
+  const sharedKey = config.BROWSERS.length > 1 ? 'cpu' : browserName;
+  return baselines[sharedKey]?.[filename] ?? baselines[browserName]?.[filename] ?? null;
+}
+
 // Run a single benchmark via Playwright (chromium, firefox)
 async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null) {
   const context = await browser.newContext();
@@ -181,14 +188,24 @@ function formatConsistency(c) {
 // Collect CPU baselines (n_gpu_layers=0) for any variants missing from the cache.
 // Stores token IDs from the CPU run — these are the reference sequence for forced eval.
 // runFn: (variant, nGpuLayers, refTokenIds) => { bench }
-// Mutates the baselines[browserName] map and saves to disk after each run.
+// Mutates the baselines map and saves to disk after each run.
+//
+// When running multiple browsers, baselines are shared: the first browser collects
+// them and subsequent browsers reuse the same reference sequences (CPU output is
+// identical regardless of JSPI vs Asyncify — only the async wrapper differs).
+// When running a single browser, behaviour is unchanged.
 async function collectMissingBaselines(browserName, variants, runFn, baselines) {
-  if (!baselines[browserName]) baselines[browserName] = {};
-  const browserBaselines = baselines[browserName];
+  // Use shared "cpu" key when multiple browsers are being tested,
+  // so baselines are collected once and reused across all browsers.
+  const baselineKey = config.BROWSERS.length > 1 ? 'cpu' : browserName;
 
-  const missing = variants.filter(v => !(v.filename in browserBaselines));
+  if (!baselines[baselineKey]) baselines[baselineKey] = {};
+  const sharedBaselines = baselines[baselineKey];
+
+  const missing = variants.filter(v => !(v.filename in sharedBaselines));
   if (missing.length === 0) {
-    console.log(`  CPU baselines: all ${variants.length} cached`);
+    const source = baselineKey === 'cpu' ? 'shared' : browserName;
+    console.log(`  CPU baselines: all ${variants.length} cached (${source})`);
     return;
   }
 
@@ -202,10 +219,10 @@ async function collectMissingBaselines(browserName, variants, runFn, baselines) 
 
     if (bench.status === 'done' && bench.metrics?.token_ids?.length > 0) {
       // Store token IDs as the reference for forced-decoding consistency check
-      browserBaselines[variant.filename] = bench.metrics.token_ids;
+      sharedBaselines[variant.filename] = bench.metrics.token_ids;
       console.log(`OK (${bench.metrics.token_ids.length} tokens)`);
     } else {
-      browserBaselines[variant.filename] = null; // failed — record so we don't retry
+      sharedBaselines[variant.filename] = null; // failed — record so we don't retry
       console.log(`FAIL (${bench.error || 'unknown'})`);
     }
 
@@ -302,7 +319,7 @@ async function main() {
         console.log(`  ${progress} ${variant.name} (${variant.sizeMB} MB)...`);
 
         const refTokenIds = config.CONSISTENCY
-          ? tokenIdsToCsv(cpuBaselines[browserName]?.[variant.filename])
+          ? tokenIdsToCsv(getBaselineTokenIds(cpuBaselines, browserName, variant.filename))
           : null;
 
         const startTime = Date.now();
@@ -437,7 +454,7 @@ async function main() {
       }
 
       const refTokenIds = config.CONSISTENCY
-        ? tokenIdsToCsv(cpuBaselines[browserName]?.[variant.filename])
+        ? tokenIdsToCsv(getBaselineTokenIds(cpuBaselines, browserName, variant.filename))
         : null;
 
       const startTime = Date.now();
