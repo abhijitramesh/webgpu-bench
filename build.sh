@@ -17,6 +17,21 @@ echo "=== WebGPU Bench WASM Build ==="
 echo "Emscripten: $EMSDK_DIR"
 echo ""
 
+# Install emsdk if not present
+if [ ! -f "$EMSDK_DIR/emsdk_env.sh" ]; then
+    echo "=== emsdk not found, fetching latest ==="
+    if [ -d "$EMSDK_DIR" ]; then
+        # Directory exists but is incomplete — update it
+        git -C "$EMSDK_DIR" pull
+    else
+        git clone https://github.com/emscripten-core/emsdk.git "$EMSDK_DIR"
+    fi
+    "$EMSDK_DIR/emsdk" install latest
+    "$EMSDK_DIR/emsdk" activate latest
+    echo "=== emsdk setup complete ==="
+    echo ""
+fi
+
 # Activate Emscripten
 source "$EMSDK_DIR/emsdk_env.sh"
 
