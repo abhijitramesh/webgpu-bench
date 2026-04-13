@@ -36,10 +36,10 @@ fi
 source "$EMSDK_DIR/emsdk_env.sh"
 
 # Get CPU count for parallel build
-if command -v sysctl &>/dev/null; then
-    NCPU=$(sysctl -n hw.ncpu)
-elif command -v nproc &>/dev/null; then
+if command -v nproc &>/dev/null; then
     NCPU=$(nproc)
+elif sysctl -n hw.ncpu &>/dev/null 2>&1; then
+    NCPU=$(sysctl -n hw.ncpu)
 else
     NCPU=4
 fi
