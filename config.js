@@ -84,7 +84,11 @@ export function getConfig() {
   }
 
   // Normalize browser aliases: "safari" → "webkit"
-  const browsers = (args.browsers || ['chromium', 'firefox', 'webkit'])
+  // Default to webkit only on macOS — Safari is unavailable on Linux
+  const defaultBrowsers = os.platform() === 'darwin'
+    ? ['chromium', 'firefox', 'webkit']
+    : ['chromium', 'firefox'];
+  const browsers = (args.browsers || defaultBrowsers)
     .map(b => b === 'safari' ? 'webkit' : b);
 
   // Sort smallest first for faster feedback and early error detection

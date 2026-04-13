@@ -6,6 +6,7 @@ import { chromium, firefox } from 'playwright';
 import { remote } from 'webdriverio';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { getConfig } from './config.js';
 import { startServer, stopServer } from './server.js';
 
@@ -292,6 +293,10 @@ async function main() {
     console.log(`\n--- Browser: ${browserName} ---`);
 
     if (browserName === 'webkit') {
+      if (os.platform() !== 'darwin') {
+        console.log(`  Skipping WebKit — Safari is only available on macOS (current: ${os.platform()})`);
+        continue;
+      }
       // Real Safari via WebDriverIO — supports WebGPU natively on macOS.
       // Requires: Safari > Settings > Advanced > "Allow Remote Automation"
       //
