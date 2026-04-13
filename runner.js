@@ -207,28 +207,58 @@ async function collectMissingBaselines(browserName, variants, runFn, baselines) 
   if (missing.length === 0) {
     const source = baselineKey === 'cpu' ? 'shared' : browserName;
     console.log(`  CPU baselines: all ${variants.length} cached (${source})`);
-    return;
+    return [];
   }
 
   console.log(`  CPU baselines: collecting ${missing.length} (${variants.length - missing.length} cached)`);
+
+  const timestamp = new Date().toISOString();
+  const cpuResults = [];
 
   for (let i = 0; i < missing.length; i++) {
     const variant = missing[i];
     process.stdout.write(`    [${i + 1}/${missing.length}] ${variant.name} (CPU)... `);
 
+    const startTime = Date.now();
     const { bench } = await runFn(variant, 0);
+    const wallTimeMs = Date.now() - startTime;
 
     if (bench.status === 'done' && bench.metrics?.token_ids?.length > 0) {
-      // Store token IDs as the reference for forced-decoding consistency check
       sharedBaselines[variant.filename] = bench.metrics.token_ids;
-      console.log(`OK (${bench.metrics.token_ids.length} tokens)`);
+      const m = bench.metrics;
+      console.log(`OK | prefill: ${m.prefill_tok_s} tok/s | decode: ${m.decode_tok_s} tok/s | wall: ${(wallTimeMs / 1000).toFixed(1)}s`);
     } else {
       sharedBaselines[variant.filename] = null; // failed — record so we don't retry
       console.log(`FAIL (${bench.error || 'unknown'})`);
     }
 
+    cpuResults.push({
+      timestamp,
+      browser: browserName,
+      model: variant.modelName,
+      repo: variant.repo,
+      variant: variant.name,
+      filename: variant.filename,
+      sizeMB: variant.sizeMB,
+      status: bench.status,
+      error: bench.error || null,
+      buildType: bench.buildType || 'unknown',
+      webgpuAvailable: bench.webgpuAvailable || false,
+      gpuAdapterInfo: bench.gpuAdapterInfo || null,
+      nGpuLayers: 0,
+      nCtx: config.N_CTX,
+      nPredict: config.N_PREDICT,
+      wallTimeMs,
+      metrics: bench.metrics || null,
+      output: (bench.output || '').substring(0, 200),
+      machine: config.MACHINE,
+      consistency: null,
+    });
+
     saveCpuBaselines(baselines);
   }
+
+  return cpuResults;
 }
 
 // Load previous results for resume mode
@@ -317,7 +347,7 @@ async function main() {
       }
 
       if (config.CONSISTENCY) {
-        await collectMissingBaselines(
+        const cpuResults = await collectMissingBaselines(
           browserName,
           config.MODEL_VARIANTS,
           async (variant, nGpuLayers) => {
@@ -333,6 +363,7 @@ async function main() {
           },
           cpuBaselines,
         );
+        allResults.push(...cpuResults);
       }
 
       for (let i = 0; i < config.MODEL_VARIANTS.length; i++) {
@@ -445,12 +476,13 @@ async function main() {
           console.error(`Failed to launch ${browserName} for baselines: ${err.message}`);
           continue;
         }
-        await collectMissingBaselines(
+        const cpuResults = await collectMissingBaselines(
           browserName,
           config.MODEL_VARIANTS,
           (variant, nGpuLayers) => runBenchmark(baselineBrowser, variant, serverUrl, nGpuLayers),
           cpuBaselines,
         );
+        allResults.push(...cpuResults);
         await baselineBrowser.close();
       } else {
         console.log(`  CPU baselines: all ${config.MODEL_VARIANTS.length} cached (shared)`);
