@@ -243,10 +243,14 @@ function loadPreviousResults() {
   return [];
 }
 
-// Check if a browser+variant combo already has a successful result
-function alreadyCompleted(previousResults, browserName, filename) {
+// Check if a browser+variant+gpu_layers combo already has a successful result
+function alreadyCompleted(previousResults, browserName, filename, nGpuLayers) {
   return previousResults.some(
-    r => r.browser === browserName && r.filename === filename && r.status === 'done'
+    r =>
+      r.browser === browserName &&
+      r.filename === filename &&
+      r.nGpuLayers === nGpuLayers &&
+      r.status === 'done'
   );
 }
 
@@ -257,6 +261,7 @@ async function main() {
   console.log(`Variants: ${config.MODEL_VARIANTS.length} models`);
   console.log(`Machine:  ${config.MACHINE.platform}/${config.MACHINE.arch} - ${config.MACHINE.cpus}`);
   console.log(`GPU layers: ${config.N_GPU_LAYERS}`);
+  if (config.NO_CACHE) console.log('Cache: OFF (models will be downloaded fresh each run)');
   if (config.CONSISTENCY) console.log('Consistency mode: ON (CPU baselines will be collected per browser)');
   if (config.RESUME) console.log('Resume mode: ON (skipping already-succeeded benchmarks)');
   console.log('');
@@ -265,7 +270,7 @@ async function main() {
   fs.mkdirSync(config.RESULTS_DIR, { recursive: true });
 
   // Start server
-  const { server, url: serverUrl } = await startServer(config.PORT);
+  const { server, url: serverUrl } = await startServer(config.PORT, { noCache: config.NO_CACHE });
   console.log(`Server: ${serverUrl}`);
 
   // Load persisted CPU baselines (allows resuming after crash)
@@ -289,9 +294,18 @@ async function main() {
     if (browserName === 'webkit') {
       // Real Safari via WebDriverIO — supports WebGPU natively on macOS.
       // Requires: Safari > Settings > Advanced > "Allow Remote Automation"
+      //
+      // Safari sessions die when the page crashes (GPU OOM on large models).
+      // Unlike Playwright browsers, WebDriverIO can't launch per-variant easily,
+      // so we detect dead sessions and restart them.
+
+      async function createSafariSession() {
+        return remote({ capabilities: { browserName: 'safari' }, logLevel: 'error' });
+      }
+
       let safariSession;
       try {
-        safariSession = await remote({ capabilities: { browserName: 'safari' }, logLevel: 'error' });
+        safariSession = await createSafariSession();
       } catch (err) {
         console.error(`  Failed to launch Safari: ${err.message}`);
         continue;
@@ -301,7 +315,17 @@ async function main() {
         await collectMissingBaselines(
           browserName,
           config.MODEL_VARIANTS,
-          (variant, nGpuLayers) => runBenchmarkSafari(safariSession, variant, serverUrl, nGpuLayers),
+          async (variant, nGpuLayers) => {
+            try {
+              return await runBenchmarkSafari(safariSession, variant, serverUrl, nGpuLayers);
+            } catch {
+              // Session died during baseline collection — restart and retry once
+              console.log('    (restarting Safari session...)');
+              try { await safariSession.deleteSession(); } catch { /* already dead */ }
+              safariSession = await createSafariSession();
+              return runBenchmarkSafari(safariSession, variant, serverUrl, nGpuLayers);
+            }
+          },
           cpuBaselines,
         );
       }
@@ -311,7 +335,7 @@ async function main() {
         const progress = `[${i + 1}/${config.MODEL_VARIANTS.length}]`;
 
         // Resume: skip already-succeeded benchmarks
-        if (config.RESUME && alreadyCompleted(previousResults, browserName, variant.filename)) {
+        if (config.RESUME && alreadyCompleted(previousResults, browserName, variant.filename, config.N_GPU_LAYERS)) {
           console.log(`  ${progress} ${variant.name} — skipped (already done)`);
           continue;
         }
@@ -323,8 +347,35 @@ async function main() {
           : null;
 
         const startTime = Date.now();
-        const { bench } = await runBenchmarkSafari(safariSession, variant, serverUrl, config.N_GPU_LAYERS, refTokenIds);
+        let { bench } = await runBenchmarkSafari(safariSession, variant, serverUrl, config.N_GPU_LAYERS, refTokenIds);
         const wallTimeMs = Date.now() - startTime;
+
+        // If the page became unresponsive, the session is dead — restart it
+        // so subsequent variants don't all fail with "invalid session id".
+        if (bench.status === 'error' && bench.error === 'Page became unresponsive') {
+          console.log('    (restarting Safari session for next variant...)');
+          try { await safariSession.deleteSession(); } catch { /* already dead */ }
+          try {
+            safariSession = await createSafariSession();
+          } catch (err) {
+            console.error(`    Failed to restart Safari: ${err.message}`);
+            // Record remaining variants as errors and break
+            for (let j = i + 1; j < config.MODEL_VARIANTS.length; j++) {
+              const v = config.MODEL_VARIANTS[j];
+              allResults.push({
+                timestamp, browser: browserName, model: v.modelName, repo: v.repo,
+                variant: v.name, filename: v.filename, sizeMB: v.sizeMB,
+                status: 'error', error: 'Safari session lost and could not restart',
+                buildType: 'unknown', webgpuAvailable: false, gpuAdapterInfo: null,
+                nGpuLayers: config.N_GPU_LAYERS, nCtx: config.N_CTX, nPredict: config.N_PREDICT,
+                wallTimeMs: 0, metrics: null, output: '', machine: config.MACHINE, consistency: null,
+              });
+            }
+            const intermediateFile = path.join(config.RESULTS_DIR, 'results.json');
+            fs.writeFileSync(intermediateFile, JSON.stringify(allResults, null, 2));
+            break;
+          }
+        }
 
         // consistency is set by harness.js via bench_eval_tokens (forced decoding)
         const consistency = bench.consistency ?? null;
@@ -365,7 +416,7 @@ async function main() {
         const intermediateFile = path.join(config.RESULTS_DIR, 'results.json');
         fs.writeFileSync(intermediateFile, JSON.stringify(allResults, null, 2));
       }
-      await safariSession.deleteSession();
+      try { await safariSession.deleteSession(); } catch { /* may already be dead */ }
       continue;
     }
 
@@ -408,7 +459,7 @@ async function main() {
       const progress = `[${i + 1}/${config.MODEL_VARIANTS.length}]`;
 
       // Resume: skip already-succeeded benchmarks
-      if (config.RESUME && alreadyCompleted(previousResults, browserName, variant.filename)) {
+      if (config.RESUME && alreadyCompleted(previousResults, browserName, variant.filename, config.N_GPU_LAYERS)) {
         console.log(`  ${progress} ${variant.name} — skipped (already done)`);
         continue;
       }

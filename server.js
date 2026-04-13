@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export function startServer(port = 3000) {
+export function startServer(port = 3000, { noCache = false } = {}) {
   return new Promise((resolve) => {
     const app = express();
 
@@ -43,16 +43,16 @@ export function startServer(port = 3000) {
       setHeaders: wasmHeaders,
     }));
 
-    // Model download cache — proxy HuggingFace and cache to disk.
-    // First request streams from HF to both client and disk.
-    // Subsequent requests serve from disk, skipping the network entirely.
+    // Model download proxy — optionally caches to disk.
+    // With caching (default): first request streams from HF to both client and disk.
+    // Subsequent requests serve from disk. With --no-cache: always streams from HF.
     const CACHE_DIR = path.join(__dirname, 'cache', 'models');
     app.get('/models/*', async (req, res) => {
       const modelPath = req.params[0];
       const cachePath = path.join(CACHE_DIR, modelPath);
 
-      // Serve from cache
-      if (fs.existsSync(cachePath)) {
+      // Serve from cache (unless --no-cache)
+      if (!noCache && fs.existsSync(cachePath)) {
         const stat = fs.statSync(cachePath);
         res.setHeader('Content-Length', String(stat.size));
         res.setHeader('Content-Type', 'application/octet-stream');
@@ -71,7 +71,7 @@ export function startServer(port = 3000) {
       const filename = parts.slice(2).join('/');
       const hfUrl = `https://huggingface.co/${repo}/resolve/main/${filename}`;
 
-      console.log(`Cache miss: downloading ${filename} from ${repo}`);
+      console.log(`${noCache ? 'No-cache' : 'Cache miss'}: downloading ${filename} from ${repo}`);
 
       try {
         const upstream = await fetch(hfUrl);
@@ -83,6 +83,26 @@ export function startServer(port = 3000) {
         const contentLength = upstream.headers.get('content-length');
         if (contentLength) res.setHeader('Content-Length', contentLength);
         res.setHeader('Content-Type', 'application/octet-stream');
+
+        if (noCache) {
+          // Stream directly to client, no disk writes
+          const reader = upstream.body.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              res.write(value);
+            }
+            res.end();
+          } catch (err) {
+            if (!res.headersSent) {
+              res.status(502).send(`Download error: ${err.message}`);
+            } else {
+              res.end();
+            }
+          }
+          return;
+        }
 
         fs.mkdirSync(path.dirname(cachePath), { recursive: true });
 

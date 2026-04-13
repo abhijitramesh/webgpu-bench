@@ -36,6 +36,7 @@ function parseArgs() {
     variants: null,
     models: null,
     noWebgpu: false,
+    noCache: false,
     consistency: false,
     resume: false,
   };
@@ -45,6 +46,8 @@ function parseArgs() {
       parsed.quick = true;
     } else if (arg === '--no-webgpu') {
       parsed.noWebgpu = true;
+    } else if (arg === '--no-cache') {
+      parsed.noCache = true;
     } else if (arg === '--consistency') {
       parsed.consistency = true;
     } else if (arg === '--resume') {
@@ -80,7 +83,9 @@ export function getConfig() {
     variants = variants.filter(v => args.variants.includes(v.name));
   }
 
-  const browsers = args.browsers || ['chromium', 'firefox', 'webkit'];
+  // Normalize browser aliases: "safari" → "webkit"
+  const browsers = (args.browsers || ['chromium', 'firefox', 'webkit'])
+    .map(b => b === 'safari' ? 'webkit' : b);
 
   // Sort smallest first for faster feedback and early error detection
   variants.sort((a, b) => a.sizeMB - b.sizeMB);
@@ -97,6 +102,9 @@ export function getConfig() {
     N_PREDICT: 128,
     N_CTX: 2048,
     N_GPU_LAYERS: args.noWebgpu ? 0 : 999,
+
+    // Disable model download caching (always fetch from HuggingFace)
+    NO_CACHE: args.noCache || false,
 
     // Consistency mode: run CPU baselines and compare
     CONSISTENCY: args.consistency || false,
