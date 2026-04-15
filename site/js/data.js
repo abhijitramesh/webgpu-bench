@@ -12,6 +12,10 @@ export function filterResults(results, filters) {
     if (filters.machine && filters.machine !== 'all' && r.machineSlug !== filters.machine) return false;
     if (filters.browser && filters.browser !== 'all' && r.browser !== filters.browser) return false;
     if (filters.model && filters.model !== 'all' && r.model !== filters.model) return false;
+    if (filters.backend && filters.backend !== 'all') {
+      if (filters.backend === 'cpu' && r.nGpuLayers !== 0) return false;
+      if (filters.backend === 'webgpu' && r.nGpuLayers === 0) return false;
+    }
     if (filters.status && filters.status !== 'all') {
       if (filters.status === 'pass' && r.status !== 'done') return false;
       if (filters.status === 'fail' && r.status === 'done') return false;

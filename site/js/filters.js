@@ -36,6 +36,14 @@ export function initFilters(meta, onChangeCallback) {
     modelSelect.appendChild(opt);
   }
 
+  // Backend select
+  const backendSelect = document.getElementById('filter-backend');
+  backendSelect.innerHTML = `
+    <option value="all">All Backends</option>
+    <option value="webgpu">WebGPU</option>
+    <option value="cpu">CPU</option>
+  `;
+
   // Status select
   const statusSelect = document.getElementById('filter-status');
   statusSelect.innerHTML = `
@@ -48,7 +56,7 @@ export function initFilters(meta, onChangeCallback) {
   initQuantMultiSelect(meta);
 
   // Wire up change events for single selects
-  for (const sel of [machineSelect, browserSelect, modelSelect, statusSelect]) {
+  for (const sel of [machineSelect, browserSelect, modelSelect, backendSelect, statusSelect]) {
     sel.addEventListener('change', fireChange);
   }
 }
@@ -171,6 +179,7 @@ export function resetFilters() {
   document.getElementById('filter-machine').value = 'all';
   document.getElementById('filter-browser').value = 'all';
   document.getElementById('filter-model').value = 'all';
+  document.getElementById('filter-backend').value = 'all';
   document.getElementById('filter-status').value = 'all';
 
   // Reset quant checkboxes
@@ -193,6 +202,7 @@ export function getFilters() {
     machine: document.getElementById('filter-machine').value,
     browser: document.getElementById('filter-browser').value,
     model: document.getElementById('filter-model').value,
+    backend: document.getElementById('filter-backend').value,
     status: document.getElementById('filter-status').value,
     quants: selectedQuants,
   };
