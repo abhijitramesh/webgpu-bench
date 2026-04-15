@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
+  <script>(function(){var t=localStorage.getItem('theme')||'light';document.documentElement.setAttribute('data-theme',t);})();</script>
   <title>WebGPU Bench</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,6 +21,10 @@
       </a>
       <nav class="header-nav">
         <a href="methodology.html" class="header-link">Methodology</a>
+        <button id="theme-toggle" class="header-link theme-toggle-btn" type="button" title="Toggle theme">
+          <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
         <a href="https://github.com/abhijitramesh/webgpu-bench" target="_blank" rel="noopener" class="header-link">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5 1 .11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.02 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.82.58C20.57 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/></svg>
           GitHub
@@ -51,6 +56,10 @@
           <div class="filter-group">
             <label class="filter-label" for="filter-model">Model</label>
             <select id="filter-model" class="filter-select"></select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="filter-backend">Backend</label>
+            <select id="filter-backend" class="filter-select"></select>
           </div>
           <div class="filter-group">
             <label class="filter-label" for="filter-status">Status</label>
@@ -146,6 +155,22 @@
             <div class="chart-box"><canvas id="chart-size"></canvas></div>
             <div class="chart-box" id="machine-chart-section"><canvas id="chart-machine"></canvas></div>
           </div>
+
+          <div class="section-header" style="margin-top: 32px;">
+            <h3 class="subsection-title">CPU vs WebGPU</h3>
+            <div class="metric-selector">
+              <span class="metric-selector-label">Metric</span>
+              <select id="cpu-gpu-metric" class="filter-select">
+                <option value="decode_tok_s">Decode tok/s</option>
+                <option value="prefill_tok_s">Prefill tok/s</option>
+              </select>
+            </div>
+          </div>
+          <div class="charts-grid">
+            <div class="chart-box"><canvas id="chart-cpu-gpu"></canvas></div>
+            <div class="chart-box"><canvas id="chart-speedup"></canvas></div>
+          </div>
+          <div id="cpu-gpu-table" style="margin-top: 16px;"></div>
         </div>
       </section>
 

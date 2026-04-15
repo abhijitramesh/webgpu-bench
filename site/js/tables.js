@@ -1,11 +1,11 @@
-import { formatTokS, formatMs, categorizeError, groupBy } from './utils.js';
+import { formatTokS, formatMs, categorizeError, groupBy, quantSortKey } from './utils.js';
 
 let lastResults = [];
 let sortState = { key: null, dir: 'asc' };
 
 const NUM_KEYS = new Set([
   'sizeMB', 'decode_tok_s', 'prefill_tok_s', 'n_eval', 't_eval_ms',
-  'n_p_eval', 't_p_eval_ms', 'wallTimeMs', 'consistency_rate',
+  'n_p_eval', 't_p_eval_ms', 'wallTimeMs', 'consistency_rate', 'nGpuLayers',
 ]);
 
 function sortResults(results, key, dir) {
@@ -57,6 +57,7 @@ export function renderResultsTable(results) {
     { key: 'variant', label: 'Quant' },
     { key: 'sizeMB', label: 'Size (MB)' },
     { key: 'browser', label: 'Browser' },
+    { key: 'nGpuLayers', label: 'Backend' },
     { key: 'status', label: 'Status' },
     { key: 'buildType', label: 'Build' },
     { key: 'webgpuAvailable', label: 'WebGPU' },
@@ -90,6 +91,14 @@ export function renderResultsTable(results) {
           html += r.status === 'done'
             ? '<span class="badge badge--pass">PASS</span>'
             : '<span class="badge badge--fail">FAIL</span>';
+          break;
+        case 'nGpuLayers':
+          if (r.nGpuLayers != null) {
+            const isCpu = r.nGpuLayers === 0;
+            html += `<span class="badge ${isCpu ? 'badge--cpu' : 'badge--webgpu'}">${isCpu ? 'CPU' : 'WebGPU'}</span>`;
+          } else {
+            html += '<span class="text-muted">\u2014</span>';
+          }
           break;
         case 'webgpuAvailable':
           html += r.webgpuAvailable
@@ -206,4 +215,108 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+export function renderCpuGpuTable(results) {
+  const container = document.getElementById('cpu-gpu-table');
+  if (!container) return;
+
+  const METRICS = [
+    { field: 'decode_tok_s', label: 'Decode tok/s' },
+    { field: 'prefill_tok_s', label: 'Prefill tok/s' },
+  ];
+
+  const passed = results.filter(r => r.status === 'done');
+  const cpuResults = passed.filter(r => r.nGpuLayers === 0);
+  const gpuResults = passed.filter(r => r.nGpuLayers !== 0);
+
+  if (cpuResults.length === 0 || gpuResults.length === 0) {
+    container.innerHTML = '<div class="empty-state"><p>Select "All Backends" to see CPU vs GPU comparison.</p></div>';
+    return;
+  }
+
+  function avg(items, field) {
+    const vals = items.map(r => r[field]).filter(v => v != null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  }
+
+  const gpuBrowsers = [...new Set(gpuResults.map(r => r.browser))].sort();
+
+  const cpuByModelVariant = groupBy(cpuResults, r => `${r.model}::${r.variant}`);
+  const gpuByModelVariant = groupBy(gpuResults, r => `${r.model}::${r.variant}`);
+
+  const keys = [...new Set([...Object.keys(cpuByModelVariant), ...Object.keys(gpuByModelVariant)])]
+    .filter(k => cpuByModelVariant[k] && gpuByModelVariant[k]);
+
+  if (keys.length === 0) {
+    container.innerHTML = '<div class="empty-state"><p>No matching model+variant pairs between CPU and GPU results.</p></div>';
+    return;
+  }
+
+  keys.sort((a, b) => {
+    const [aModel, aVar] = a.split('::');
+    const [bModel, bVar] = b.split('::');
+    if (aModel !== bModel) return aModel.localeCompare(bModel);
+    return quantSortKey(aVar) - quantSortKey(bVar);
+  });
+
+  // Two-row grouped header: row1 = group labels (CPU, Chromium, …), row2 = metric sub-labels
+  // CPU gets colspan = METRICS.length, each GPU browser gets colspan = METRICS.length * 2 (value + speedup per metric)
+  const gpuColspan = METRICS.length * 2;
+  let html = '<div class="table-card"><div class="results-wrapper"><table class="results-table"><thead>';
+
+  // Row 1: group headers
+  html += '<tr>';
+  html += '<th rowspan="2" class="th-group-border">Model</th><th rowspan="2" class="th-group-border">Quant</th>';
+  html += `<th colspan="${METRICS.length}" class="th-group th-group-border">CPU</th>`;
+  for (const b of gpuBrowsers) {
+    html += `<th colspan="${gpuColspan}" class="th-group th-group-border">${escapeHtml(b.charAt(0).toUpperCase() + b.slice(1))}</th>`;
+  }
+  html += '</tr>';
+
+  // Row 2: metric sub-headers
+  html += '<tr>';
+  for (const m of METRICS) {
+    html += `<th class="th-sub">${m.label}</th>`;
+  }
+  for (const b of gpuBrowsers) {
+    for (const m of METRICS) {
+      html += `<th class="th-sub">${m.label}</th><th class="th-sub">Speedup</th>`;
+    }
+  }
+  html += '</tr></thead><tbody>';
+
+  for (const key of keys) {
+    const [model, variant] = key.split('::');
+    const cpuItems = cpuByModelVariant[key] || [];
+    const gpuByBrowser = groupBy(gpuByModelVariant[key] || [], 'browser');
+
+    html += '<tr>';
+    html += `<td>${escapeHtml(model)}</td>`;
+    html += `<td><span class="mono">${escapeHtml(variant)}</span></td>`;
+
+    // CPU columns
+    for (const m of METRICS) {
+      const val = avg(cpuItems, m.field);
+      html += `<td><span class="mono">${formatTokS(val)}</span></td>`;
+    }
+
+    // GPU columns per browser
+    for (const b of gpuBrowsers) {
+      const gpuItems = gpuByBrowser[b] || [];
+      for (const m of METRICS) {
+        const cpuVal = avg(cpuItems, m.field);
+        const gpuVal = avg(gpuItems, m.field);
+        const speedup = cpuVal && gpuVal ? gpuVal / cpuVal : null;
+        const cls = speedup == null ? '' : speedup >= 3 ? 'text-success' : speedup >= 1.5 ? '' : speedup >= 1 ? 'text-muted' : 'text-error';
+        html += `<td><span class="mono">${formatTokS(gpuVal)}</span></td>`;
+        html += `<td><span class="mono ${cls}">${speedup != null ? speedup.toFixed(2) + '\u00d7' : '\u2014'}</span></td>`;
+      }
+    }
+
+    html += '</tr>';
+  }
+
+  html += '</tbody></table></div></div>';
+  container.innerHTML = html;
 }

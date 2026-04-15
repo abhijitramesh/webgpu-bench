@@ -23,32 +23,40 @@ function destroyChart(id) {
   }
 }
 
-const DARK_GRID = 'rgba(255,255,255,0.06)';
-const DARK_TEXT = '#a1a1aa';
-const TITLE_TEXT = '#e4e4e7';
+function themeColors() {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  return {
+    grid:  dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+    text:  dark ? '#a1a1aa' : '#71717a',
+    title: dark ? '#e4e4e7' : '#09090b',
+  };
+}
 
 function darkScales(xTitle, yTitle) {
+  const c = themeColors();
   return {
     x: {
-      ticks: { color: DARK_TEXT },
-      grid: { color: DARK_GRID },
-      title: xTitle ? { display: true, text: xTitle, color: DARK_TEXT } : undefined,
+      ticks: { color: c.text },
+      grid: { color: c.grid },
+      title: xTitle ? { display: true, text: xTitle, color: c.text } : undefined,
     },
     y: {
-      ticks: { color: DARK_TEXT },
-      grid: { color: DARK_GRID },
-      title: yTitle ? { display: true, text: yTitle, color: DARK_TEXT } : undefined,
+      ticks: { color: c.text },
+      grid: { color: c.grid },
+      title: yTitle ? { display: true, text: yTitle, color: c.text } : undefined,
       beginAtZero: true,
     },
   };
 }
 
 function darkLegend() {
-  return { labels: { color: DARK_TEXT, usePointStyle: true, pointStyle: 'circle' } };
+  const c = themeColors();
+  return { labels: { color: c.text, usePointStyle: true, pointStyle: 'circle' } };
 }
 
 function titleConfig(text) {
-  return { display: true, text, color: TITLE_TEXT, font: { size: 14, weight: '600' } };
+  const c = themeColors();
+  return { display: true, text, color: c.title, font: { size: 14, weight: '600' } };
 }
 
 export function renderDecodeChart(results) {
@@ -203,6 +211,173 @@ export function renderSizeChart(results) {
         },
       },
       scales: darkScales('Model Size (MB)', 'Decode tok/s'),
+    },
+  }));
+}
+
+const CPU_COLOR = 'rgba(245, 158, 11, 0.75)';
+
+function showEmptyState(canvas, msg) {
+  canvas.parentElement.querySelector('.chart-empty')?.remove();
+  const el = document.createElement('div');
+  el.className = 'chart-empty';
+  el.textContent = msg || 'No data';
+  canvas.parentElement.appendChild(el);
+}
+
+function clearEmptyState(canvas) {
+  canvas.parentElement.querySelector('.chart-empty')?.remove();
+}
+
+const METRIC_LABELS = {
+  decode_tok_s: 'Decode tok/s',
+  prefill_tok_s: 'Prefill tok/s',
+};
+
+function avgBy(items, field) {
+  const vals = items.map(r => r[field]).filter(v => v != null);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+
+export function renderCpuGpuChart(results, metric = 'decode_tok_s') {
+  const canvasId = 'chart-cpu-gpu';
+  destroyChart(canvasId);
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+
+  const passed = results.filter(r => r.status === 'done' && r[metric] != null);
+  const cpuResults = passed.filter(r => r.nGpuLayers === 0);
+  const gpuResults = passed.filter(r => r.nGpuLayers !== 0);
+
+  if (cpuResults.length === 0 || gpuResults.length === 0) {
+    showEmptyState(canvas, cpuResults.length === 0 ? 'No CPU baseline data in current filter' : 'No GPU data in current filter');
+    return;
+  }
+  clearEmptyState(canvas);
+
+  const cpuVariants = new Set(cpuResults.map(r => r.variant));
+  const allQuants = [...new Set(gpuResults.map(r => r.variant))]
+    .filter(q => cpuVariants.has(q))
+    .sort((a, b) => quantSortKey(a) - quantSortKey(b));
+
+  if (allQuants.length === 0) {
+    showEmptyState(canvas, 'No overlapping variants between CPU and GPU');
+    return;
+  }
+
+  const cpuByVariant = groupBy(cpuResults, 'variant');
+  const cpuData = allQuants.map(q => avgBy(cpuByVariant[q] || [], metric));
+
+  const gpuByBrowser = groupBy(gpuResults, 'browser');
+  const gpuDatasets = Object.entries(gpuByBrowser).map(([browser, items]) => {
+    const byVariant = groupBy(items, 'variant');
+    return {
+      label: browser,
+      backgroundColor: BROWSER_COLORS[browser] || '#888',
+      data: allQuants.map(q => avgBy(byVariant[q] || [], metric)),
+    };
+  });
+
+  const metricLabel = METRIC_LABELS[metric] || metric;
+  chartInstances.set(canvasId, new Chart(canvas, {
+    type: 'bar',
+    data: { labels: allQuants, datasets: [{ label: 'CPU', backgroundColor: CPU_COLOR, data: cpuData }, ...gpuDatasets] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        title: titleConfig(`CPU vs WebGPU: ${metricLabel}`),
+        legend: darkLegend(),
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${formatTokS(ctx.raw)} tok/s` } },
+      },
+      scales: darkScales('Quantization', metricLabel),
+    },
+  }));
+}
+
+export function renderSpeedupChart(results, metric = 'decode_tok_s') {
+  const canvasId = 'chart-speedup';
+  destroyChart(canvasId);
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+
+  const passed = results.filter(r => r.status === 'done' && r[metric] != null);
+  const cpuResults = passed.filter(r => r.nGpuLayers === 0);
+  const gpuResults = passed.filter(r => r.nGpuLayers !== 0);
+
+  if (cpuResults.length === 0 || gpuResults.length === 0) {
+    showEmptyState(canvas, cpuResults.length === 0 ? 'No CPU baseline data in current filter' : 'No GPU data in current filter');
+    return;
+  }
+  clearEmptyState(canvas);
+
+  const cpuAvgByVariant = {};
+  for (const [q, items] of Object.entries(groupBy(cpuResults, 'variant'))) {
+    cpuAvgByVariant[q] = avgBy(items, metric);
+  }
+
+  const allQuants = [...new Set(gpuResults.map(r => r.variant))]
+    .filter(q => cpuAvgByVariant[q] != null)
+    .sort((a, b) => quantSortKey(a) - quantSortKey(b));
+
+  if (allQuants.length === 0) {
+    showEmptyState(canvas, 'No overlapping variants between CPU and GPU');
+    return;
+  }
+
+  const gpuByBrowser = groupBy(gpuResults, 'browser');
+  const barDatasets = Object.entries(gpuByBrowser).map(([browser, items]) => {
+    const byVariant = groupBy(items, 'variant');
+    return {
+      label: browser,
+      backgroundColor: BROWSER_COLORS[browser] || '#888',
+      data: allQuants.map(q => {
+        const cpuAvg = cpuAvgByVariant[q];
+        const gpuAvg = avgBy(byVariant[q] || [], metric);
+        return cpuAvg && gpuAvg ? gpuAvg / cpuAvg : null;
+      }),
+    };
+  });
+
+  const refLine = {
+    label: '1\u00d7',
+    type: 'line',
+    data: allQuants.map(() => 1),
+    borderColor: 'rgba(255,255,255,0.3)',
+    borderDash: [4, 4],
+    borderWidth: 1.5,
+    pointRadius: 0,
+    fill: false,
+    order: -1,
+  };
+
+  const metricLabel = METRIC_LABELS[metric] || metric;
+  chartInstances.set(canvasId, new Chart(canvas, {
+    type: 'bar',
+    data: { labels: allQuants, datasets: [...barDatasets, refLine] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        title: titleConfig(`WebGPU Speedup over CPU (${metricLabel})`),
+        legend: {
+          ...darkLegend(),
+          labels: { ...darkLegend().labels, filter: item => item.text !== '1\u00d7' },
+        },
+        tooltip: {
+          filter: item => item.dataset.label !== '1\u00d7',
+          callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw != null ? ctx.raw.toFixed(2) + '\u00d7' : '\u2014'}` },
+        },
+      },
+      scales: {
+        x: { ticks: { color: themeColors().text }, grid: { color: themeColors().grid }, title: { display: true, text: 'Quantization', color: themeColors().text } },
+        y: {
+          ticks: { color: themeColors().text, callback: v => `${v.toFixed(1)}\u00d7` },
+          grid: { color: themeColors().grid },
+          title: { display: true, text: 'Speedup (\u00d7)', color: themeColors().text },
+          beginAtZero: true,
+        },
+      },
     },
   }));
 }

@@ -1,7 +1,7 @@
 import { loadData, filterResults } from './data.js';
 import { initFilters, populateQuantOptions, getFilters, resetFilters } from './filters.js';
-import { renderDecodeChart, renderPrefillChart, renderSizeChart, renderMachineChart } from './charts.js';
-import { renderResultsTable, renderErrorTable, renderMachineInfo } from './tables.js';
+import { renderDecodeChart, renderPrefillChart, renderSizeChart, renderMachineChart, renderCpuGpuChart, renderSpeedupChart } from './charts.js';
+import { renderResultsTable, renderErrorTable, renderMachineInfo, renderCpuGpuTable } from './tables.js';
 
 let appData = null;
 
@@ -31,6 +31,14 @@ async function init() {
   // Init filter dropdowns
   initFilters(appData.meta, () => render());
 
+  // Wire theme toggle
+  document.getElementById('theme-toggle')?.addEventListener('click', () => {
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    if (appData) render();
+  });
+
   // Wire reset button
   const resetBtn = document.getElementById('filter-reset');
   if (resetBtn) {
@@ -38,6 +46,12 @@ async function init() {
       resetFilters();
       render();
     });
+  }
+
+  // Wire metric selector for CPU vs GPU section
+  const metricSelect = document.getElementById('cpu-gpu-metric');
+  if (metricSelect) {
+    metricSelect.addEventListener('change', () => render());
   }
 
   // Init section navigation
@@ -48,6 +62,14 @@ async function init() {
 }
 
 function render() {
+  // Sync Chart.js defaults with current theme
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  Chart.defaults.color = isDark ? '#a1a1aa' : '#71717a';
+  Chart.defaults.plugins.tooltip.backgroundColor = isDark ? 'rgba(15,15,18,0.95)' : 'rgba(255,255,255,0.95)';
+  Chart.defaults.plugins.tooltip.borderColor = isDark ? '#27272a' : '#e4e4e7';
+  Chart.defaults.plugins.tooltip.titleColor = isDark ? '#e4e4e7' : '#09090b';
+  Chart.defaults.plugins.tooltip.bodyColor = isDark ? '#a1a1aa' : '#71717a';
+
   const filters = getFilters();
   const filtered = filterResults(appData.results, filters);
 
@@ -71,7 +93,8 @@ function render() {
   const resetBtn = document.getElementById('filter-reset');
   if (resetBtn) {
     const active = filters.machine !== 'all' || filters.browser !== 'all' ||
-      filters.model !== 'all' || filters.status !== 'all' || filters.quants.size > 0;
+      filters.model !== 'all' || filters.backend !== 'all' ||
+      filters.status !== 'all' || filters.quants.size > 0;
     resetBtn.style.display = active ? '' : 'none';
   }
 
@@ -85,6 +108,12 @@ function render() {
   renderPrefillChart(filtered);
   renderSizeChart(filtered);
   renderMachineChart(filtered, appData.meta.machines);
+
+  // CPU vs GPU comparison
+  const metric = document.getElementById('cpu-gpu-metric')?.value || 'decode_tok_s';
+  renderCpuGpuChart(filtered, metric);
+  renderSpeedupChart(filtered, metric);
+  renderCpuGpuTable(filtered);
 }
 
 function initSectionNav() {
