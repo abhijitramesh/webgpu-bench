@@ -57,6 +57,7 @@ function main() {
         error: r.error,
         buildType: r.buildType,
         webgpuAvailable: r.webgpuAvailable,
+        nGpuLayers: r.nGpuLayers ?? null,
         wallTimeMs: r.wallTimeMs,
         prefill_tok_s: r.metrics?.prefill_tok_s ?? null,
         decode_tok_s: r.metrics?.decode_tok_s ?? null,
