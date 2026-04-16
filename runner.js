@@ -1,15 +1,19 @@
 // Playwright orchestrator for WebGPU LLM benchmarks.
-// Runs each model variant in each browser, collects metrics.
+// Variant-first execution: downloads model once, tests all browsers, deletes cache.
+// This minimises disk usage and avoids redundant downloads.
 // Safari uses WebDriverIO (real Safari) to get actual WebGPU support.
 
 import { chromium, firefox } from 'playwright';
 import { remote } from 'webdriverio';
+import { execSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { getConfig } from './config.js';
 import { startServer, stopServer } from './server.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const config = getConfig();
 
 // Browser launch args
@@ -139,11 +143,11 @@ async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_G
       consoleLogs,
     };
   } finally {
-    await context.close();
+    try { await context.close(); } catch {}
   }
 }
 
-// Run a single benchmark in an existing WebDriverIO Safari session
+// Run a single benchmark in a WebDriverIO Safari session
 async function runBenchmarkSafari(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null) {
   const harnessUrl = buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds);
 
@@ -186,81 +190,6 @@ function formatConsistency(c) {
   return `${pct}% top-1 agreement (first diverge @ token ${c.first_disagreement})`;
 }
 
-// Collect CPU baselines (n_gpu_layers=0) for any variants missing from the cache.
-// Stores token IDs from the CPU run — these are the reference sequence for forced eval.
-// runFn: (variant, nGpuLayers, refTokenIds) => { bench }
-// Mutates the baselines map and saves to disk after each run.
-//
-// When running multiple browsers, baselines are shared: the first browser collects
-// them and subsequent browsers reuse the same reference sequences (CPU output is
-// identical regardless of JSPI vs Asyncify — only the async wrapper differs).
-// When running a single browser, behaviour is unchanged.
-async function collectMissingBaselines(browserName, variants, runFn, baselines) {
-  // Use shared "cpu" key when multiple browsers are being tested,
-  // so baselines are collected once and reused across all browsers.
-  const baselineKey = config.BROWSERS.length > 1 ? 'cpu' : browserName;
-
-  if (!baselines[baselineKey]) baselines[baselineKey] = {};
-  const sharedBaselines = baselines[baselineKey];
-
-  const missing = variants.filter(v => !(v.filename in sharedBaselines));
-  if (missing.length === 0) {
-    const source = baselineKey === 'cpu' ? 'shared' : browserName;
-    console.log(`  CPU baselines: all ${variants.length} cached (${source})`);
-    return [];
-  }
-
-  console.log(`  CPU baselines: collecting ${missing.length} (${variants.length - missing.length} cached)`);
-
-  const timestamp = new Date().toISOString();
-  const cpuResults = [];
-
-  for (let i = 0; i < missing.length; i++) {
-    const variant = missing[i];
-    process.stdout.write(`    [${i + 1}/${missing.length}] ${variant.name} (CPU)... `);
-
-    const startTime = Date.now();
-    const { bench } = await runFn(variant, 0);
-    const wallTimeMs = Date.now() - startTime;
-
-    if (bench.status === 'done' && bench.metrics?.token_ids?.length > 0) {
-      sharedBaselines[variant.filename] = bench.metrics.token_ids;
-      const m = bench.metrics;
-      console.log(`OK | prefill: ${m.prefill_tok_s} tok/s | decode: ${m.decode_tok_s} tok/s | wall: ${(wallTimeMs / 1000).toFixed(1)}s`);
-    } else {
-      sharedBaselines[variant.filename] = null; // failed — record so we don't retry
-      console.log(`FAIL (${bench.error || 'unknown'})`);
-    }
-
-    cpuResults.push({
-      timestamp,
-      browser: browserName,
-      model: variant.modelName,
-      repo: variant.repo,
-      variant: variant.name,
-      filename: variant.filename,
-      sizeMB: variant.sizeMB,
-      status: bench.status,
-      error: bench.error || null,
-      buildType: bench.buildType || 'unknown',
-      webgpuAvailable: bench.webgpuAvailable || false,
-      gpuAdapterInfo: bench.gpuAdapterInfo || null,
-      nGpuLayers: 0,
-      nCtx: config.N_CTX,
-      nPredict: config.N_PREDICT,
-      wallTimeMs,
-      metrics: bench.metrics || null,
-      output: (bench.output || '').substring(0, 200),
-      machine: config.MACHINE,
-      consistency: null,
-    });
-
-    saveCpuBaselines(baselines);
-  }
-
-  return cpuResults;
-}
-
 // Load previous results for resume mode
 function loadPreviousResults() {
   const file = path.join(config.RESULTS_DIR, 'results.json');
@@ -285,7 +214,176 @@ function alreadyCompleted(previousResults, browserName, filename, nGpuLayers) {
   );
 }
 
-// Main
+// Build a result object from benchmark output
+function makeResult(timestamp, browserName, variant, bench, nGpuLayers, wallTimeMs) {
+  return {
+    timestamp,
+    browser: browserName,
+    model: variant.modelName,
+    repo: variant.repo,
+    variant: variant.name,
+    filename: variant.filename,
+    sizeMB: variant.sizeMB,
+    status: bench.status || 'error',
+    error: bench.error || null,
+    buildType: bench.buildType || 'unknown',
+    webgpuAvailable: bench.webgpuAvailable || false,
+    gpuAdapterInfo: bench.gpuAdapterInfo || null,
+    nGpuLayers,
+    nCtx: config.N_CTX,
+    nPredict: config.N_PREDICT,
+    wallTimeMs,
+    metrics: bench.metrics || null,
+    output: (bench.output || '').substring(0, 200),
+    machine: config.MACHINE,
+    consistency: bench.consistency ?? null,
+  };
+}
+
+// Managed safaridriver lifecycle.  WebDriverIO's internal safaridriver management
+// doesn't clean up reliably between sessions (port conflicts even after deleteSession).
+// We start safaridriver manually on a fixed port, giving us full control.
+const SAFARI_PORT = 4444;
+
+function killSafariDriver() {
+  try { execSync('killall -9 safaridriver 2>/dev/null', { stdio: 'ignore' }); } catch {}
+}
+
+async function startSafariDriver() {
+  killSafariDriver();
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  const proc = spawn('safaridriver', ['--port', String(SAFARI_PORT)], {
+    stdio: 'ignore', detached: true,
+  });
+  proc.unref();
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  return proc;
+}
+
+async function createSafariSession() {
+  return remote({
+    capabilities: { browserName: 'safari' },
+    hostname: 'localhost',
+    port: SAFARI_PORT,
+    logLevel: 'error',
+  });
+}
+
+// Delete a cached model file to free disk space
+function deleteModelCache(variant) {
+  const cachePath = path.join(__dirname, 'cache', 'models', variant.repo, variant.filename);
+  try {
+    if (fs.existsSync(cachePath)) {
+      fs.unlinkSync(cachePath);
+    }
+  } catch {}
+}
+
+// Run a variant in a Playwright browser (chromium/firefox) with a hard-kill timeout.
+// Launches a fresh browser per variant to prevent WASM memory accumulation.
+// If the browser hangs past the soft timeout, SIGKILL ensures we don't wait forever.
+async function runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds) {
+  const browserType = getBrowserType(browserName);
+  const launchOpts = getBrowserLaunchArgs(browserName);
+
+  let browser;
+  try {
+    browser = await browserType.launch(launchOpts);
+  } catch (err) {
+    return makeResult(timestamp, browserName, variant, {
+      status: 'error', error: `Browser launch failed: ${err.message}`,
+    }, nGpuLayers, 0);
+  }
+
+  const startTime = Date.now();
+  let hardKilled = false;
+
+  // Hard timeout: SIGKILL the browser process if it hangs past the soft timeout.
+  // This prevents hung Firefox processes from blocking the entire run for hours.
+  const hardTimer = setTimeout(() => {
+    hardKilled = true;
+    const proc = browser.process();
+    if (proc) {
+      try { proc.kill('SIGKILL'); } catch {}
+    }
+  }, config.TIMEOUTS.total + 5000);
+
+  try {
+    const { bench } = await runBenchmark(browser, variant, serverUrl, nGpuLayers, refTokenIds);
+    clearTimeout(hardTimer);
+    const wallTimeMs = Date.now() - startTime;
+    return makeResult(timestamp, browserName, variant, bench, nGpuLayers, wallTimeMs);
+  } catch (err) {
+    clearTimeout(hardTimer);
+    const wallTimeMs = Date.now() - startTime;
+    return makeResult(timestamp, browserName, variant, {
+      status: 'error',
+      error: hardKilled ? 'Hard timeout — browser killed' : `Runner error: ${err.message}`,
+    }, nGpuLayers, wallTimeMs);
+  } finally {
+    clearTimeout(hardTimer);
+    // Graceful close with a short deadline — don't let a dead browser block us
+    try {
+      await Promise.race([
+        browser.close(),
+        new Promise(resolve => setTimeout(resolve, 5000)),
+      ]);
+    } catch {}
+  }
+}
+
+// Run a variant in Safari/WebKit with a hard-kill timeout.
+// Starts a fresh safaridriver + session per variant so one crash never cascade-fails.
+async function runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTokenIds) {
+  let driverProc;
+  let session;
+  try {
+    driverProc = await startSafariDriver();
+    session = await createSafariSession();
+  } catch (err) {
+    killSafariDriver();
+    return makeResult(timestamp, 'webkit', variant, {
+      status: 'error', error: `Safari launch failed: ${err.message}`,
+    }, nGpuLayers, 0);
+  }
+
+  const startTime = Date.now();
+  let hardKilled = false;
+
+  const hardTimer = setTimeout(() => {
+    hardKilled = true;
+    killSafariDriver();
+  }, config.TIMEOUTS.total + 5000);
+
+  try {
+    const { bench } = await runBenchmarkSafari(session, variant, serverUrl, nGpuLayers, refTokenIds);
+    clearTimeout(hardTimer);
+    const wallTimeMs = Date.now() - startTime;
+    return makeResult(timestamp, 'webkit', variant, bench, nGpuLayers, wallTimeMs);
+  } catch (err) {
+    clearTimeout(hardTimer);
+    const wallTimeMs = Date.now() - startTime;
+    return makeResult(timestamp, 'webkit', variant, {
+      status: 'error',
+      error: hardKilled ? 'Hard timeout — Safari killed' : `Runner error: ${err.message}`,
+    }, nGpuLayers, wallTimeMs);
+  } finally {
+    clearTimeout(hardTimer);
+    try { await session.deleteSession(); } catch {}
+    try { driverProc.kill('SIGTERM'); } catch {}
+    killSafariDriver();
+  }
+}
+
+// Dispatch a variant run to the appropriate browser driver
+async function runVariantInBrowser(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds) {
+  if (browserName === 'webkit') {
+    return runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTokenIds);
+  }
+  return runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds);
+}
+
+// Main — variant-first loop: download model → CPU baseline → all browsers GPU → delete cache
 async function main() {
   console.log('=== WebGPU LLM Benchmark Runner ===');
   console.log(`Browsers: ${config.BROWSERS.join(', ')}`);
@@ -293,8 +391,9 @@ async function main() {
   console.log(`Machine:  ${config.MACHINE.platform}/${config.MACHINE.arch} - ${config.MACHINE.cpus}`);
   console.log(`GPU layers: ${config.N_GPU_LAYERS}`);
   if (config.NO_CACHE) console.log('Cache: OFF (models will be downloaded fresh each run)');
-  if (config.CONSISTENCY) console.log('Consistency mode: ON (CPU baselines will be collected per browser)');
+  if (config.CONSISTENCY) console.log('Consistency mode: ON (CPU baseline + GPU per variant)');
   if (config.RESUME) console.log('Resume mode: ON (skipping already-succeeded benchmarks)');
+  console.log('Execution: variant-first (download → all browsers → delete cache)');
   console.log('');
 
   // Ensure results dir exists
@@ -319,277 +418,88 @@ async function main() {
   }
   const timestamp = new Date().toISOString();
 
-  for (const browserName of config.BROWSERS) {
-    console.log(`\n--- Browser: ${browserName} ---`);
-
-    if (browserName === 'webkit') {
-      if (os.platform() !== 'darwin') {
-        console.log(`  Skipping WebKit — Safari is only available on macOS (current: ${os.platform()})`);
-        continue;
-      }
-      // Real Safari via WebDriverIO — supports WebGPU natively on macOS.
-      // Requires: Safari > Settings > Advanced > "Allow Remote Automation"
-      //
-      // Safari sessions die when the page crashes (GPU OOM on large models).
-      // Unlike Playwright browsers, WebDriverIO can't launch per-variant easily,
-      // so we detect dead sessions and restart them.
-
-      async function createSafariSession() {
-        return remote({ capabilities: { browserName: 'safari' }, logLevel: 'error' });
-      }
-
-      let safariSession;
-      try {
-        safariSession = await createSafariSession();
-      } catch (err) {
-        console.error(`  Failed to launch Safari: ${err.message}`);
-        continue;
-      }
-
-      if (config.CONSISTENCY) {
-        const cpuResults = await collectMissingBaselines(
-          browserName,
-          config.MODEL_VARIANTS,
-          async (variant, nGpuLayers) => {
-            try {
-              return await runBenchmarkSafari(safariSession, variant, serverUrl, nGpuLayers);
-            } catch {
-              // Session died during baseline collection — restart and retry once
-              console.log('    (restarting Safari session...)');
-              try { await safariSession.deleteSession(); } catch { /* already dead */ }
-              safariSession = await createSafariSession();
-              return runBenchmarkSafari(safariSession, variant, serverUrl, nGpuLayers);
-            }
-          },
-          cpuBaselines,
-        );
-        allResults.push(...cpuResults);
-      }
-
-      for (let i = 0; i < config.MODEL_VARIANTS.length; i++) {
-        const variant = config.MODEL_VARIANTS[i];
-        const progress = `[${i + 1}/${config.MODEL_VARIANTS.length}]`;
-
-        // Resume: skip already-succeeded benchmarks
-        if (config.RESUME && alreadyCompleted(previousResults, browserName, variant.filename, config.N_GPU_LAYERS)) {
-          console.log(`  ${progress} ${variant.name} — skipped (already done)`);
-          continue;
-        }
-
-        console.log(`  ${progress} ${variant.name} (${variant.sizeMB} MB)...`);
-
-        const refTokenIds = config.CONSISTENCY
-          ? tokenIdsToCsv(getBaselineTokenIds(cpuBaselines, browserName, variant.filename))
-          : null;
-
-        const startTime = Date.now();
-        let { bench } = await runBenchmarkSafari(safariSession, variant, serverUrl, config.N_GPU_LAYERS, refTokenIds);
-        const wallTimeMs = Date.now() - startTime;
-
-        // If the page became unresponsive, the session is dead — restart it
-        // so subsequent variants don't all fail with "invalid session id".
-        if (bench.status === 'error' && bench.error === 'Page became unresponsive') {
-          console.log('    (restarting Safari session for next variant...)');
-          try { await safariSession.deleteSession(); } catch { /* already dead */ }
-          try {
-            safariSession = await createSafariSession();
-          } catch (err) {
-            console.error(`    Failed to restart Safari: ${err.message}`);
-            // Record remaining variants as errors and break
-            for (let j = i + 1; j < config.MODEL_VARIANTS.length; j++) {
-              const v = config.MODEL_VARIANTS[j];
-              allResults.push({
-                timestamp, browser: browserName, model: v.modelName, repo: v.repo,
-                variant: v.name, filename: v.filename, sizeMB: v.sizeMB,
-                status: 'error', error: 'Safari session lost and could not restart',
-                buildType: 'unknown', webgpuAvailable: false, gpuAdapterInfo: null,
-                nGpuLayers: config.N_GPU_LAYERS, nCtx: config.N_CTX, nPredict: config.N_PREDICT,
-                wallTimeMs: 0, metrics: null, output: '', machine: config.MACHINE, consistency: null,
-              });
-            }
-            const intermediateFile = path.join(config.RESULTS_DIR, 'results.json');
-            fs.writeFileSync(intermediateFile, JSON.stringify(allResults, null, 2));
-            break;
-          }
-        }
-
-        // consistency is set by harness.js via bench_eval_tokens (forced decoding)
-        const consistency = bench.consistency ?? null;
-
-        const result = {
-          timestamp,
-          browser: browserName,
-          model: variant.modelName,
-          repo: variant.repo,
-          variant: variant.name,
-          filename: variant.filename,
-          sizeMB: variant.sizeMB,
-          status: bench.status,
-          error: bench.error || null,
-          buildType: bench.buildType || 'unknown',
-          webgpuAvailable: bench.webgpuAvailable || false,
-          gpuAdapterInfo: bench.gpuAdapterInfo || null,
-          nGpuLayers: config.N_GPU_LAYERS,
-          nCtx: config.N_CTX,
-          nPredict: config.N_PREDICT,
-          wallTimeMs,
-          metrics: bench.metrics || null,
-          output: (bench.output || '').substring(0, 200),
-          machine: config.MACHINE,
-          consistency,
-        };
-
-        allResults.push(result);
-
-        if (bench.status === 'done' && bench.metrics) {
-          const m = bench.metrics;
-          const consistencyLabel = config.CONSISTENCY ? ` | ${formatConsistency(consistency)}` : '';
-          console.log(`    OK | prefill: ${m.prefill_tok_s} tok/s | decode: ${m.decode_tok_s} tok/s | wall: ${(wallTimeMs / 1000).toFixed(1)}s${consistencyLabel}`);
-        } else {
-          console.log(`    FAIL | ${bench.error || 'unknown error'}`);
-        }
-
-        const intermediateFile = path.join(config.RESULTS_DIR, 'results.json');
-        fs.writeFileSync(intermediateFile, JSON.stringify(allResults, null, 2));
-      }
-      try { await safariSession.deleteSession(); } catch { /* may already be dead */ }
-      continue;
+  // Filter browsers: skip webkit on non-macOS
+  const activeBrowsers = config.BROWSERS.filter(b => {
+    if (b === 'webkit' && os.platform() !== 'darwin') {
+      console.log('Skipping WebKit — Safari is only available on macOS');
+      return false;
     }
+    return true;
+  });
 
-    // Chromium / Firefox via Playwright
-    // Launch a fresh browser for each variant to prevent WASM memory from
-    // accumulating across runs (Firefox is especially prone to OOM otherwise).
-    const browserType = getBrowserType(browserName);
-    const launchOpts = getBrowserLaunchArgs(browserName);
+  // Variant-first loop: each model is downloaded once, tested across all
+  // browsers, then its cache entry is deleted to free disk space.
+  for (let i = 0; i < config.MODEL_VARIANTS.length; i++) {
+    const variant = config.MODEL_VARIANTS[i];
+    console.log(`\n[${i + 1}/${config.MODEL_VARIANTS.length}] ${variant.modelName} / ${variant.name} (${variant.sizeMB} MB)`);
 
+    // Phase 1: CPU baseline (if --consistency and not yet cached)
     if (config.CONSISTENCY) {
-      // Skip browser launch if all baselines are already cached (shared across browsers)
-      const baselineKey = config.BROWSERS.length > 1 ? 'cpu' : browserName;
-      const cached = cpuBaselines[baselineKey] || {};
-      const needsCollection = config.MODEL_VARIANTS.some(v => !(v.filename in cached));
+      const baselineKey = activeBrowsers.length > 1 ? 'cpu' : activeBrowsers[0];
+      if (!cpuBaselines[baselineKey]) cpuBaselines[baselineKey] = {};
 
-      if (needsCollection) {
-        let baselineBrowser;
-        try {
-          baselineBrowser = await browserType.launch(launchOpts);
-        } catch (err) {
-          console.error(`Failed to launch ${browserName} for baselines: ${err.message}`);
-          continue;
-        }
-        const cpuResults = await collectMissingBaselines(
-          browserName,
-          config.MODEL_VARIANTS,
-          (variant, nGpuLayers) => runBenchmark(baselineBrowser, variant, serverUrl, nGpuLayers),
-          cpuBaselines,
+      if (!(variant.filename in cpuBaselines[baselineKey])) {
+        // Use first Playwright-compatible browser for CPU baseline
+        const blBrowser = activeBrowsers.find(b => b !== 'webkit') || activeBrowsers[0];
+        process.stdout.write(`  cpu baseline (${blBrowser})... `);
+
+        const cpuResult = await runVariantInBrowser(
+          blBrowser, variant, serverUrl, timestamp, 0, null
         );
-        allResults.push(...cpuResults);
-        await baselineBrowser.close();
+
+        if (cpuResult.status === 'done' && cpuResult.metrics?.token_ids?.length > 0) {
+          cpuBaselines[baselineKey][variant.filename] = cpuResult.metrics.token_ids;
+          const m = cpuResult.metrics;
+          console.log(`OK | prefill: ${m.prefill_tok_s} tok/s | decode: ${m.decode_tok_s} tok/s | wall: ${(cpuResult.wallTimeMs / 1000).toFixed(1)}s`);
+        } else {
+          cpuBaselines[baselineKey][variant.filename] = null; // failed — don't retry
+          console.log(`FAIL (${cpuResult.error || 'unknown'})`);
+        }
+
+        allResults.push(cpuResult);
+        saveCpuBaselines(cpuBaselines);
+
+        // Save intermediate results (crash resilience)
+        fs.writeFileSync(path.join(config.RESULTS_DIR, 'results.json'), JSON.stringify(allResults, null, 2));
       } else {
-        console.log(`  CPU baselines: all ${config.MODEL_VARIANTS.length} cached (shared)`);
+        console.log('  cpu baseline: cached');
       }
     }
 
-    let gpuInfo = null;
-
-    for (let i = 0; i < config.MODEL_VARIANTS.length; i++) {
-      const variant = config.MODEL_VARIANTS[i];
-      const progress = `[${i + 1}/${config.MODEL_VARIANTS.length}]`;
-
+    // Phase 2: GPU (or configured nGpuLayers) run across all browsers
+    for (const browserName of activeBrowsers) {
       // Resume: skip already-succeeded benchmarks
       if (config.RESUME && alreadyCompleted(previousResults, browserName, variant.filename, config.N_GPU_LAYERS)) {
-        console.log(`  ${progress} ${variant.name} — skipped (already done)`);
+        console.log(`  ${browserName}: skipped (already done)`);
         continue;
       }
 
-      console.log(`  ${progress} ${variant.name} (${variant.sizeMB} MB)...`);
-
-      // Launch a fresh browser for each variant to avoid OOM from WASM memory leaks
-      let browser;
-      try {
-        browser = await browserType.launch(launchOpts);
-      } catch (err) {
-        console.error(`    Failed to launch ${browserName}: ${err.message}`);
-        const result = {
-          timestamp,
-          browser: browserName,
-          model: variant.modelName,
-          repo: variant.repo,
-          variant: variant.name,
-          filename: variant.filename,
-          sizeMB: variant.sizeMB,
-          status: 'error',
-          error: `Browser launch failed: ${err.message}`,
-          buildType: 'unknown',
-          webgpuAvailable: false,
-          gpuAdapterInfo: gpuInfo || null,
-          nGpuLayers: config.N_GPU_LAYERS,
-          nCtx: config.N_CTX,
-          nPredict: config.N_PREDICT,
-          wallTimeMs: 0,
-          metrics: null,
-          output: '',
-          machine: config.MACHINE,
-          consistency: null,
-        };
-        allResults.push(result);
-        const intermediateFile = path.join(config.RESULTS_DIR, 'results.json');
-        fs.writeFileSync(intermediateFile, JSON.stringify(allResults, null, 2));
-        continue;
-      }
+      process.stdout.write(`  ${browserName}... `);
 
       const refTokenIds = config.CONSISTENCY
         ? tokenIdsToCsv(getBaselineTokenIds(cpuBaselines, browserName, variant.filename))
         : null;
 
-      const startTime = Date.now();
-      const { bench } = await runBenchmark(browser, variant, serverUrl, config.N_GPU_LAYERS, refTokenIds);
-      const wallTimeMs = Date.now() - startTime;
-
-      // Close browser immediately to free WASM memory before next variant
-      await browser.close();
-
-      // consistency is set by harness.js via bench_eval_tokens (forced decoding)
-      const consistency = bench.consistency ?? null;
-
-      const result = {
-        timestamp,
-        browser: browserName,
-        model: variant.modelName,
-        repo: variant.repo,
-        variant: variant.name,
-        filename: variant.filename,
-        sizeMB: variant.sizeMB,
-        status: bench.status,
-        error: bench.error || null,
-        buildType: bench.buildType || 'unknown',
-        webgpuAvailable: bench.webgpuAvailable || false,
-        gpuAdapterInfo: bench.gpuAdapterInfo || gpuInfo || null,
-        nGpuLayers: config.N_GPU_LAYERS,
-        nCtx: config.N_CTX,
-        nPredict: config.N_PREDICT,
-        wallTimeMs,
-        metrics: bench.metrics || null,
-        output: (bench.output || '').substring(0, 200),
-        machine: config.MACHINE,
-        consistency,
-      };
+      const result = await runVariantInBrowser(
+        browserName, variant, serverUrl, timestamp, config.N_GPU_LAYERS, refTokenIds
+      );
 
       allResults.push(result);
 
-      if (!gpuInfo && bench.gpuAdapterInfo) gpuInfo = bench.gpuAdapterInfo;
-
-      if (bench.status === 'done' && bench.metrics) {
-        const m = bench.metrics;
-        const consistencyLabel = config.CONSISTENCY ? ` | ${formatConsistency(consistency)}` : '';
-        console.log(`    OK | prefill: ${m.prefill_tok_s} tok/s | decode: ${m.decode_tok_s} tok/s | wall: ${(wallTimeMs / 1000).toFixed(1)}s${consistencyLabel}`);
+      if (result.status === 'done' && result.metrics) {
+        const m = result.metrics;
+        const consistencyLabel = config.CONSISTENCY ? ` | ${formatConsistency(result.consistency)}` : '';
+        console.log(`OK | prefill: ${m.prefill_tok_s} tok/s | decode: ${m.decode_tok_s} tok/s | wall: ${(result.wallTimeMs / 1000).toFixed(1)}s${consistencyLabel}`);
       } else {
-        console.log(`    FAIL | ${bench.error || 'unknown error'}`);
+        console.log(`FAIL | ${result.error || 'unknown error'}`);
       }
 
       // Save intermediate results (crash resilience)
-      const intermediateFile = path.join(config.RESULTS_DIR, 'results.json');
-      fs.writeFileSync(intermediateFile, JSON.stringify(allResults, null, 2));
+      fs.writeFileSync(path.join(config.RESULTS_DIR, 'results.json'), JSON.stringify(allResults, null, 2));
     }
+
+    // Phase 3: Delete cached model to free disk space
+    deleteModelCache(variant);
   }
 
   // Final save
