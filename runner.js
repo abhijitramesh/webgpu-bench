@@ -16,6 +16,16 @@ import { startServer, stopServer } from './server.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const config = getConfig();
 
+// Read llama.cpp submodule commit hash once at startup for result tracking
+function getLlamaCppCommit() {
+  try {
+    return execSync('git -C llama.cpp rev-parse HEAD', { encoding: 'utf-8' }).trim();
+  } catch {
+    return null;
+  }
+}
+const LLAMA_CPP_COMMIT = getLlamaCppCommit();
+
 // Browser launch args
 function getBrowserLaunchArgs(browserName) {
   const common = { headless: false };
@@ -237,6 +247,7 @@ function makeResult(timestamp, browserName, variant, bench, nGpuLayers, wallTime
     output: (bench.output || '').substring(0, 200),
     machine: config.MACHINE,
     consistency: bench.consistency ?? null,
+    llamaCppCommit: LLAMA_CPP_COMMIT,
   };
 }
 
@@ -390,6 +401,7 @@ async function main() {
   console.log(`Variants: ${config.MODEL_VARIANTS.length} models`);
   console.log(`Machine:  ${config.MACHINE.platform}/${config.MACHINE.arch} - ${config.MACHINE.cpus}`);
   console.log(`GPU layers: ${config.N_GPU_LAYERS}`);
+  if (LLAMA_CPP_COMMIT) console.log(`llama.cpp:  ${LLAMA_CPP_COMMIT.slice(0, 10)}`);
   if (config.NO_CACHE) console.log('Cache: OFF (models will be downloaded fresh each run)');
   if (config.CONSISTENCY) console.log('Consistency mode: ON (CPU baseline + GPU per variant)');
   if (config.RESUME) console.log('Resume mode: ON (skipping already-succeeded benchmarks)');
