@@ -31,6 +31,9 @@ function main() {
     const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     const slug = data.machine.slug;
 
+    // Extract llama.cpp commit(s) used in this machine's results
+    const llamaCommits = [...new Set(data.results.map(r => r.llamaCppCommit).filter(Boolean))];
+
     machines.push({
       slug,
       cpus: data.machine.cpus,
@@ -40,6 +43,7 @@ function main() {
       submittedAt: data.submittedAt,
       resultCount: data.results.length,
       passCount: data.results.filter(r => r.status === 'done').length,
+      llamaCppCommit: llamaCommits[0] || null,
     });
 
     for (const r of data.results) {
@@ -67,6 +71,7 @@ function main() {
         t_eval_ms: r.metrics?.t_eval_ms ?? null,
         consistency_rate: r.consistency?.agreement_rate ?? null,
         consistency_first_disagree: r.consistency?.first_disagreement ?? null,
+        llamaCppCommit: r.llamaCppCommit ?? null,
       };
 
       allResults.push(flat);

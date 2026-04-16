@@ -69,6 +69,7 @@ export function renderResultsTable(results) {
     { key: 't_p_eval_ms', label: 't_p_eval (ms)' },
     { key: 'wallTimeMs', label: 'Wall (s)' },
     { key: 'consistency_rate', label: 'CPU Match' },
+    { key: 'llamaCppCommit', label: 'llama.cpp' },
     { key: 'error', label: 'Error' },
   ];
 
@@ -122,6 +123,14 @@ export function renderResultsTable(results) {
             const cls = r.consistency_rate >= 0.95 ? 'text-success' : r.consistency_rate >= 0.90 ? '' : 'text-error';
             const diverge = r.consistency_first_disagree >= 0 ? ` (diverge@${r.consistency_first_disagree})` : '';
             html += `<span class="mono ${cls}">${pct}%${diverge}</span>`;
+          } else {
+            html += '<span class="text-muted">\u2014</span>';
+          }
+          break;
+        case 'llamaCppCommit':
+          if (r.llamaCppCommit) {
+            const short = r.llamaCppCommit.slice(0, 10);
+            html += `<a class="mono" href="https://github.com/ggml-org/llama.cpp/commit/${r.llamaCppCommit}" target="_blank" rel="noopener">${short}</a>`;
           } else {
             html += '<span class="text-muted">\u2014</span>';
           }
@@ -204,6 +213,7 @@ export function renderMachineInfo(machines) {
           <div class="spec-row"><span class="spec-label">Results</span><span class="spec-value">${m.resultCount}</span></div>
           <div class="spec-row"><span class="spec-label">Passed</span><span class="spec-value text-success">${m.passCount}</span></div>
           <div class="spec-row"><span class="spec-label">Failed</span><span class="spec-value text-error">${failCount}</span></div>
+          ${m.llamaCppCommit ? `<div class="spec-row"><span class="spec-label">llama.cpp</span><span class="spec-value"><a href="https://github.com/ggml-org/llama.cpp/commit/${m.llamaCppCommit}" target="_blank" rel="noopener">${m.llamaCppCommit.slice(0, 10)}</a></span></div>` : ''}
         </div>
       </div>`;
   }
