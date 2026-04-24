@@ -5,18 +5,18 @@ Benchmarking framework for llama.cpp's WebGPU backend. Compiles llama.cpp to Web
 Currently tracks **10 models** with **194 quantization variants** from HuggingFace.
 
 Two ways to run:
-- **One-click Run page** — open `/site/run/` in any WebGPU-capable browser. Tick the variants you want, click Download → Run. Great for measuring your own laptop or for the hosted leaderboard URL. See [One-click benchmark](#one-click-benchmark).
+- **One-click Run page** — open `/site/run.html` in any WebGPU-capable browser. Tick the variants you want, click Download → Run. Great for measuring your own laptop or for the hosted leaderboard URL. See [One-click benchmark](#one-click-benchmark).
 - **Automated CLI** (`runner.js`) — Playwright + WebDriverIO orchestrator that runs cross-browser matrices headlessly. Used for CI and cloud runs. See [Running Benchmarks](#running-benchmarks).
 
 ## One-click benchmark
 
-The Run page is a standalone entry at `site/run/index.html`, linked from the header of the dashboard. Start the dev server and open it in whichever browser you want to test.
+The Run page is a standalone entry at `site/run.html`, linked from the header of the dashboard. Start the dev server and open it in whichever browser you want to test.
 
 ```bash
 # Prerequisites: built WASM (`npm run build`) and `npm install`.
 node server.js
 # http://localhost:3000/ → dashboard. Click "Run" in the header, or open
-# http://localhost:3000/site/run/ directly.
+# http://localhost:3000/site/run.html directly.
 ```
 
 Run-page flow:
@@ -32,9 +32,9 @@ The Run page auto-detects its surface and adapts:
 
 | Surface | URL | Models | Cache | Submit |
 |---|---|---|---|---|
-| Localhost | `/site/run/` | `/api/models` (Express) | `cache/models/` on disk | `POST /api/results` → `npm run submit` |
-| HF Space | `/run/` | `./models.json` | OPFS | HF OAuth → direct commit to the leaderboard dataset |
-| GH Pages | `/run/` | `./models.json` | OPFS | Hidden (read-only — a banner points at the Space) |
+| Localhost | `/site/run.html` | `/api/models` (Express) | `cache/models/` on disk | `POST /api/results` → `npm run submit` |
+| HF Space | `/run.html` | `./models.json` | OPFS | HF OAuth → direct commit to the leaderboard dataset |
+| GH Pages | `/run.html` | `./models.json` | OPFS | Hidden (read-only — a banner points at the Space) |
 
 The `sync-to-hf-space` workflow flattens `site/` onto your Space root on every push to `main` (set the `HF_SPACE_REPO` repo variable + `HF_TOKEN` secret first). Dataset repo + OAuth scopes live in `site/js/run/config.js`.
 
@@ -245,7 +245,7 @@ The default path pushes to a shared Hugging Face dataset. The dashboard CI pulls
 ```bash
 # 1. Run benchmarks
 node runner.js --browsers=chromium
-# …or use the Run page: http://localhost:3000/site/run/
+# …or use the Run page: http://localhost:3000/site/run.html
 
 # 2. Push to the leaderboard dataset
 export HF_TOKEN=hf_your_write_token             # create at https://huggingface.co/settings/tokens
@@ -268,7 +268,7 @@ gh pr create
 
 ### Data Pipeline
 
-1. Benchmarks (CLI or the Run page at `/site/run/`) write to `results/results.json`.
+1. Benchmarks (CLI or the Run page at `/site/run.html`) write to `results/results.json`.
 2. `npm run submit` pushes stripped records to the HF dataset via `scripts/push-to-dataset.mjs`.
 3. Dashboard CI (`deploy-dashboard.yml`) runs `scripts/sync-from-dataset.mjs` to regroup `runs/**/*.json` into `data/machines/{slug}.json`, then `scripts/build-site.js` merges into `data/combined.json`.
 4. The static site at `site/` renders `combined.json` client-side.

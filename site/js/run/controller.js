@@ -65,13 +65,12 @@ function canSubmit() {
 // ──────────────── data loading ────────────────
 
 async function loadModels() {
-  // Candidates in order — the Run page lives at /site/run/ locally but may be
-  // flattened to Space root. Relative `../models.json` catches the local case;
-  // `./models.json` catches the flattened case; absolute `/models.json` catches
-  // Space root too; `/api/models` is the Express backend.
+  // Page lives at /site/run.html locally and /run.html on the flattened
+  // Space + GH Pages. Sibling `./models.json` works in all three; `/api/models`
+  // is the Express backend only.
   const candidates = state.surface === 'localhost'
-    ? ['/api/models', '../models.json', './models.json', '/models.json']
-    : ['./models.json', '../models.json', '/models.json', './data/models.json'];
+    ? ['/api/models', './models.json', '/models.json']
+    : ['./models.json', '/models.json'];
   let lastErr = null;
   for (const url of candidates) {
     try {

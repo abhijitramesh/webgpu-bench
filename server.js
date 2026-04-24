@@ -26,7 +26,7 @@ export function startServer(port = 3000, { noCache = false } = {}) {
       if (req.path === '/') return res.redirect(302, '/site/');
       next();
     });
-    app.get('/bench.html', (req, res) => res.redirect(301, '/site/run/'));
+    app.get('/bench.html', (req, res) => res.redirect(301, '/site/run.html'));
 
     // Alias so harness.html (served at root) can import Run-tab modules via
     // `./js/run/*.js` — the same relative path that works on the HF Space
