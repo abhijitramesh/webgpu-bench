@@ -38,13 +38,37 @@ jobs:
         with:
           lfs: true
 
-      - name: Build combined.json + copy models.json into site/
+      - uses: actions/setup-node@v4
+        if: env.SKIP != '1'
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        if: env.SKIP != '1'
+        run: npm ci || npm install
+
+      - name: Sync HF dataset into data/machines/
+        if: env.SKIP != '1'
+        env:
+          HF_DATASET_REPO: ${{ vars.HF_DATASET_REPO }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_DATASET_REPO" ]; then
+            echo "HF_DATASET_REPO repo variable not set; using committed data/machines/*.json (if any)"
+          else
+            node scripts/sync-from-dataset.mjs
+          fi
+
+      - name: Build combined.json + mirror models.json into site/
         if: env.SKIP != '1'
         run: |
-          if [ -d data/machines ]; then
+          if [ -d data/machines ] && [ -n "$(ls -A data/machines 2>/dev/null)" ]; then
             node scripts/build-site.js
           else
-            # No machine data committed — just mirror models.json into site/.
+            # No machine data at all — produce an empty dashboard payload so
+            # the static site doesn't 404 on combined.json.
+            mkdir -p site/data
+            echo '{"meta":{"machines":[],"models":[],"browsers":[],"generatedAt":"'"$(date -u +%FT%TZ)"'"},"results":[]}' > site/data/combined.json
             cp models.json site/models.json
           fi
 
