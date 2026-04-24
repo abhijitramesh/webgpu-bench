@@ -1,0 +1,29 @@
+# SkyPilot task: CPU-only RunPod pod for the CPU baseline portion of the
+# benchmark. Split from the GPU pod to avoid paying GPU rates for CPU work.
+#
+# Launched via cloud/sky-bench.sh (which sets GPU_TYPE/MACHINE_SLUG/BENCH_FLAGS
+# based on the short id). Not meant to be `sky launch`'d directly.
+
+resources:
+  cloud: runpod
+  # Pin the SKU explicitly. Otherwise SkyPilot's optimizer may pick a cheap
+  # GPU pod whose price beats the smallest CPU SKU matching cpus/memory
+  # constraints (seen on RunPod: a 2x RTX 4000 Ada at $0.52/h vs. cpu3g-16-64
+  # at $0.64/h — GPU pod wins on price, defeating the split). 32 GiB RAM is
+  # plenty for the --quick workload (largest model ~3 GB).
+  instance_type: cpu3c-16-32
+  # RunPod container disk cap = 10x vCPUs, so 16 vCPU → 160 GB max.
+  disk_size: 120
+
+workdir: .
+
+envs:
+  MACHINE_SLUG: ""
+  LLAMA_CPP_COMMIT: ""
+  BENCH_FLAGS: "--quick --no-webgpu --no-cache --browsers=chromium --resume"
+
+setup: |
+  bash cloud/setup.sh
+
+run: |
+  bash cloud/run.sh

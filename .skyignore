@@ -1,0 +1,11 @@
+.git
+node_modules
+site/node_modules
+cloud/.venv
+llama.cpp
+build/
+cache/
+results/
+results-cloud/
+data/machines/
+.DS_Store

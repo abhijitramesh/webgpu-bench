@@ -1,0 +1,20 @@
+# SkyPilot task: RunPod GPU pod for the WebGPU portion of the benchmark.
+# The accelerator is passed via `sky launch --gpus <NAME>` from sky-bench.sh
+# (SkyPilot does not substitute ${VAR} inside resources.accelerators).
+
+resources:
+  cloud: runpod
+  disk_size: 120
+
+workdir: .
+
+envs:
+  MACHINE_SLUG: ""
+  LLAMA_CPP_COMMIT: ""
+  BENCH_FLAGS: "--quick --no-cache --browsers=chromium --resume"
+
+setup: |
+  bash cloud/setup.sh
+
+run: |
+  bash cloud/run.sh

@@ -18,6 +18,7 @@ const config = getConfig();
 
 // Read llama.cpp submodule commit hash once at startup for result tracking
 function getLlamaCppCommit() {
+  if (process.env.LLAMA_CPP_COMMIT) return process.env.LLAMA_CPP_COMMIT;
   try {
     return execSync('git -C llama.cpp rev-parse HEAD', { encoding: 'utf-8' }).trim();
   } catch {

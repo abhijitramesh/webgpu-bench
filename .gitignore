@@ -9,6 +9,7 @@ node_modules/
 
 # Test results
 results/
+results-cloud/
 
 # Emscripten artifacts
 *.wasm

@@ -133,6 +133,7 @@ export function getConfig() {
       cpus: os.cpus()[0]?.model || 'unknown',
       totalMemoryGB: Math.round(os.totalmem() / (1024 ** 3)),
       hostname: os.hostname(),
+      slug: process.env.MACHINE_SLUG || null,
     },
   };
 }
