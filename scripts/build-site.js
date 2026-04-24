@@ -104,8 +104,8 @@ function main() {
   console.log(`  Models:   ${[...modelsSet].join(', ')}`);
   console.log(`  Browsers: ${[...browsersSet].join(', ')}`);
 
-  // Mirror models.json into site/ so the Run tab can fetch it on static hosts
-  // (GH Pages, HF Space) via `./models.json`.
+  // Mirror models.json into site/ so the Run page can fetch it via
+  // `./models.json` on the HF Space (flattened root) and any other static host.
   if (fs.existsSync(MODELS_SRC)) {
     fs.copyFileSync(MODELS_SRC, MODELS_DST);
     console.log(`  Copied ${path.relative(ROOT, MODELS_SRC)} → ${path.relative(ROOT, MODELS_DST)}`);

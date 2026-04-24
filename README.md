@@ -26,15 +26,17 @@ Run-page flow:
 4. **`[Run benchmarks]`** runs each cached variant through `runBenchmarkCore()` sequentially. A crash in one variant doesn't halt the queue.
 5. **Output** — copy the markdown block or download JSON. When served from `localhost:3000`, a checkbox appends each record to `results/results.json` as runner.js does.
 
-### Hosted (HF Space, GitHub Pages)
+### Hosted (HF Space)
 
-The Run page auto-detects its surface and adapts:
+The canonical deployment is the HF Space at
+`https://abhijitramesh-webgpu-bench.static.hf.space/`. The Run page auto-detects
+its surface and adapts:
 
 | Surface | URL | Models | Cache | Submit |
 |---|---|---|---|---|
 | Localhost | `/site/run.html` | `/api/models` (Express) | `cache/models/` on disk | `POST /api/results` → `npm run submit` |
 | HF Space | `/run.html` | `./models.json` | OPFS | HF OAuth → direct commit to the leaderboard dataset |
-| GH Pages | `/run.html` | `./models.json` | OPFS | Hidden (read-only — a banner points at the Space) |
+| Other hosted | `/run.html` | `./models.json` | OPFS | Hidden (read-only — a banner points at the Space) |
 
 The `sync-to-hf-space` workflow flattens `site/` onto your Space root on every push to `main` (set the `HF_SPACE_REPO` repo variable + `HF_TOKEN` secret first). Dataset repo + OAuth scopes live in `site/js/run/config.js`.
 
@@ -221,7 +223,7 @@ Forced decoding evaluates each position independently against the same reference
 
 ## Dashboard
 
-A static dashboard visualizes benchmark results across machines and browsers. Deployed to GitHub Pages automatically when results are merged to `main`.
+A static dashboard visualizes benchmark results across machines and browsers. Deployed to the HF Space on every push to `main` via `.github/workflows/sync-to-hf-space.yml`.
 
 ### Local Preview
 
@@ -240,7 +242,7 @@ npx serve site
 
 ### Submitting Results from Your Machine
 
-The default path pushes to a shared Hugging Face dataset. The dashboard CI pulls from the dataset on a schedule, so your results surface publicly without any manual PR.
+The default path pushes to a shared Hugging Face dataset. The HF Space sync workflow pulls from the dataset on every push, so your results surface publicly without any manual PR (re-trigger manually via `workflow_dispatch` if you want to refresh between pushes).
 
 ```bash
 # 1. Run benchmarks
@@ -270,8 +272,8 @@ gh pr create
 
 1. Benchmarks (CLI or the Run page at `/site/run.html`) write to `results/results.json`.
 2. `npm run submit` pushes stripped records to the HF dataset via `scripts/push-to-dataset.mjs`.
-3. Dashboard CI (`deploy-dashboard.yml`) runs `scripts/sync-from-dataset.mjs` to regroup `runs/**/*.json` into `data/machines/{slug}.json`, then `scripts/build-site.js` merges into `data/combined.json`.
-4. The static site at `site/` renders `combined.json` client-side.
+3. `sync-to-hf-space.yml` runs `scripts/sync-from-dataset.mjs` to regroup `runs/**/*.json` into `data/machines/{slug}.json`, then `scripts/build-site.js` merges into `data/combined.json`, then flattens `site/` onto the HF Space root.
+4. The static Space renders `combined.json` client-side.
 
 First-time bootstrap: `HF_TOKEN=… HF_DATASET_REPO=… node scripts/bootstrap-dataset.mjs` seeds the dataset from any existing `data/machines/*.json`.
 
@@ -364,7 +366,7 @@ webgpu-bench/
     build-site.js        # Merge machine data into combined.json
 
   data/machines/         # Committed benchmark results (one file per machine)
-  site/                  # Static dashboard (GitHub Pages)
+  site/                  # Static dashboard (HF Space)
   .github/workflows/     # CI: deploy dashboard on merge
 ```
 

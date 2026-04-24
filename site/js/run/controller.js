@@ -46,7 +46,6 @@ async function detectSurface() {
   if (params.get('mode') === 'local') return 'localhost';
   if (params.get('mode') === 'hosted') return 'space';
   if (/\.static\.hf\.space$/.test(location.hostname)) return 'space';
-  if (/\.github\.io$/.test(location.hostname)) return 'pages';
   if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     try {
       const r = await fetch('/api/models', { method: 'HEAD' });
@@ -54,6 +53,8 @@ async function detectSurface() {
     } catch { /* no backend */ }
   }
   if (location.protocol === 'file:') return 'file';
+  // Fallback for any other hosted location (mirror, preview deploy, etc.).
+  // Read-only: Submit hidden, no backend save.
   return 'pages';
 }
 
@@ -65,8 +66,8 @@ function canSubmit() {
 // ──────────────── data loading ────────────────
 
 async function loadModels() {
-  // Page lives at /site/run.html locally and /run.html on the flattened
-  // Space + GH Pages. Sibling `./models.json` works in all three; `/api/models`
+  // Page lives at /site/run.html locally and /run.html on the HF Space
+  // (flattened root). Sibling `./models.json` works in both; `/api/models`
   // is the Express backend only.
   const candidates = state.surface === 'localhost'
     ? ['/api/models', './models.json', '/models.json']
