@@ -1,9 +1,9 @@
 // Thin adapter: reads URL params, calls runBenchmarkCore(), writes to
 // window.__BENCH so runner.js (Playwright) can poll. Inference logic lives
-// in bench-core.js, shared with the interactive bench-app.js page.
+// in site/js/run/core.js, shared with the interactive Run-tab controller.
 
-import { runBenchmarkCore } from './bench-core.js';
-import { localSource } from './bench-source.js';
+import { runBenchmarkCore } from './js/run/core.js';
+import { localSource } from './js/run/source.js';
 
 // Global error handlers — catch Emscripten abort() which may not throw.
 window.addEventListener('error', (e) => {

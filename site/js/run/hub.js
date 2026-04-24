@@ -1,8 +1,8 @@
 // Hugging Face OAuth + dataset push for the bench page (hosted mode).
 //
 // Flow:
-//   1. On page load, bench-app.js calls `resumeHFSession()` to handle the
-//      OAuth redirect (if the URL has the expected query params) and to
+//   1. On page load, the run controller calls `resumeHFSession()` to handle
+//      the OAuth redirect (if the URL has the expected query params) and to
 //      reuse any previously-stored access token.
 //   2. Clicking [Sign in] calls `beginHFSignIn()` which redirects the
 //      browser to HF; after consent, HF redirects back to the page with
@@ -24,7 +24,7 @@ import {
   HF_OAUTH_SCOPES,
   HF_DATASET_REPO,
   isHubConfigured,
-} from './bench-config.js';
+} from './config.js';
 
 const TOKEN_STORAGE_KEY = 'webgpu-bench:hfOauth';
 
@@ -73,7 +73,7 @@ function readStoredSession() {
 
 export async function beginHFSignIn() {
   if (!isHubConfigured()) {
-    throw new Error('HF hub is not configured. Set HF_DATASET_REPO in bench-config.js.');
+    throw new Error('HF hub is not configured. Set HF_DATASET_REPO in run/config.js.');
   }
   // When served from an HF Space with `hf_oauth: true`, HF injects
   // `window.huggingface.variables` with OAUTH_CLIENT_ID + OAUTH_SCOPES.

@@ -8,6 +8,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const MACHINES_DIR = path.join(ROOT, 'data', 'machines');
 const OUT_FILE = path.join(ROOT, 'site', 'data', 'combined.json');
+const MODELS_SRC = path.join(ROOT, 'models.json');
+const MODELS_DST = path.join(ROOT, 'site', 'models.json');
 
 function main() {
   if (!fs.existsSync(MACHINES_DIR)) {
@@ -101,6 +103,13 @@ function main() {
   console.log(`  Results:  ${allResults.length}`);
   console.log(`  Models:   ${[...modelsSet].join(', ')}`);
   console.log(`  Browsers: ${[...browsersSet].join(', ')}`);
+
+  // Mirror models.json into site/ so the Run tab can fetch it on static hosts
+  // (GH Pages, HF Space) via `./models.json`.
+  if (fs.existsSync(MODELS_SRC)) {
+    fs.copyFileSync(MODELS_SRC, MODELS_DST);
+    console.log(`  Copied ${path.relative(ROOT, MODELS_SRC)} → ${path.relative(ROOT, MODELS_DST)}`);
+  }
 }
 
 main();

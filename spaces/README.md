@@ -29,4 +29,4 @@ Per-variant: prefill tokens/sec, decode tokens/sec, wall clock, optional CPU-vs-
 - **Bonsai-1.7B Q1_0** needs `Q1_0` quantization support. The base (non-Q1_0) variant loads regardless.
 
 ## Privacy
-No data is sent anywhere unless you click **Submit to leaderboard dataset**, which pushes to the dataset configured in `bench-config.js`. Models and logs stay in your browser.
+No data is sent anywhere unless you click **Submit to leaderboard dataset**, which pushes to the dataset configured in `site/js/run/config.js` (`js/run/config.js` on the Space). Models and logs stay in your browser.

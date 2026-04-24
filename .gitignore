@@ -33,3 +33,4 @@ a.out.*
 
 # Dashboard build output (auto-generated)
 site/data/combined.json
+site/models.json

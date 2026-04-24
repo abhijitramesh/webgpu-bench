@@ -21,6 +21,24 @@ export function startServer(port = 3000, { noCache = false } = {}) {
     // JSON parser for POST /api/results.
     app.use(express.json({ limit: '10mb' }));
 
+    // Root / → /site/  so the merged app is the canonical entry.
+    app.get('/', (req, res, next) => {
+      if (req.path === '/') return res.redirect(302, '/site/');
+      next();
+    });
+    app.get('/bench.html', (req, res) => res.redirect(301, '/site/run/'));
+
+    // Alias so harness.html (served at root) can import Run-tab modules via
+    // `./js/run/*.js` — the same relative path that works on the HF Space
+    // where the merged app is flattened to the Space root.
+    app.use('/js', express.static(path.join(__dirname, 'site', 'js'), {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.js')) {
+          res.setHeader('Content-Type', 'application/javascript');
+        }
+      },
+    }));
+
     // Serve harness files from project root
     app.use(express.static(__dirname, {
       setHeaders: (res, filePath) => {
@@ -236,5 +254,16 @@ export function startServer(port = 3000, { noCache = false } = {}) {
 export function stopServer(server) {
   return new Promise((resolve) => {
     server.close(resolve);
+  });
+}
+
+// When run directly (`node server.js`), start listening so the README
+// workflow is self-consistent. When imported (e.g. from runner.js), the
+// caller drives startServer() itself.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const port = parseInt(process.env.PORT || '3000', 10);
+  startServer(port).catch((err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
   });
 }

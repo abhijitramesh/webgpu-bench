@@ -1,6 +1,6 @@
 // Benchmark core: load GGUF via a source adapter, init llama.cpp WASM,
 // run inference, collect metrics. Used by harness.js (URL-param driven, for
-// runner.js) and by bench-app.js (UI driven).
+// runner.js) and by the Run-tab controller (UI driven).
 
 const DEFAULT_PROMPT = 'Hello, how are you?';
 
@@ -31,7 +31,7 @@ export async function runBenchmarkCore({
   onProgress = () => {},
   onLog = () => {},
 }) {
-  if (!source) throw new Error('No source provided (see bench-source.js).');
+  if (!source) throw new Error('No source provided (see run/source.js).');
   if (!modelFile) throw new Error('No model file specified.');
   if (!hfRepo) throw new Error('No hfRepo specified.');
 

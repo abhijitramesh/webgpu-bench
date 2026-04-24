@@ -906,3 +906,337 @@ a:hover { color: #60a5fa; }
 }
 .methodology-content tbody tr:last-child td { border-bottom: none; }
 .methodology-content tbody tr:hover { background: var(--surface-2); }
+
+/* =============================================================
+   RUN TAB (one-click benchmark)
+   ============================================================= */
+/* Global [hidden] override — the attribute's UA default (display:none) loses
+   to any component rule that sets display explicitly (e.g. .btn → inline-flex,
+   .run-pages-banner → flex). Restore the invariant with one rule. */
+[hidden] { display: none !important; }
+
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+}
+
+/* Shared button primitives. Stay consistent with .filter-reset-btn height. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+  white-space: nowrap;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--foreground);
+  color: var(--background);
+}
+.btn-primary:hover:not(:disabled) { background: var(--foreground-secondary); }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--foreground-secondary);
+  border-color: var(--border);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--foreground);
+  border-color: var(--border-hover);
+}
+
+.btn-danger {
+  background: var(--error-bg);
+  color: var(--error);
+  border-color: var(--error);
+}
+.btn-danger:hover:not(:disabled) { background: var(--error); color: var(--background); }
+
+/* Run-mode badge colored by surface. */
+.run-mode-badge {
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.run-mode-localhost { background: var(--accent-blue-bg); color: var(--accent-blue); }
+.run-mode-space { background: var(--accent-purple-bg); color: var(--accent-purple); }
+.run-mode-pages { background: var(--surface-3); color: var(--foreground-subtle); }
+.run-mode-file { background: var(--accent-amber-bg); color: var(--accent-amber); }
+
+/* Pages-mode read-only banner. */
+.run-pages-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: var(--accent-blue-bg);
+  color: var(--foreground-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+.run-pages-banner a { font-weight: 600; }
+
+/* HF hub sign-in/submit row (space surface only). */
+.hub-row { margin-bottom: 20px; }
+.hub-row-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.hub-row-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--foreground-muted);
+  font-size: 13px;
+  font-family: var(--font-mono);
+}
+.hub-row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Device / budget stat cards (reuses .summary-grid + .stat-card shells). */
+.run-device-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-bottom: 24px;
+}
+.run-device-card { flex-direction: column; align-items: stretch; gap: 10px; }
+.run-device-card .stat-card-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.run-device-rows { display: flex; flex-direction: column; gap: 4px; }
+.run-device-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  font-family: var(--font-mono);
+}
+.run-device-row-label { color: var(--foreground-muted); }
+.run-device-row-value { color: var(--foreground); font-weight: 600; }
+.run-device-note { font-size: 11px; color: var(--foreground-subtle); margin-top: 2px; }
+
+/* Hide filters + iterations + action buttons — stacks with .filter-bar tokens. */
+.run-filters { align-items: center; }
+.run-filters-checks {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.run-hide-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--foreground-secondary);
+  cursor: pointer;
+}
+.run-hide-label input[type="checkbox"] { accent-color: var(--foreground); }
+.run-iter-input {
+  width: 72px;
+  min-width: 0;
+  padding: 0 10px;
+  background: var(--surface-1);
+  background-image: none;
+}
+.run-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+#queue-status { font-size: 12px; color: var(--foreground-muted); font-family: var(--font-mono); }
+
+/* Family cards + variant rows. */
+.run-models-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.run-family { padding: 0; overflow: hidden; }
+.run-family > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--surface-1);
+  border-bottom: 1px solid transparent;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.run-family[open] > summary {
+  border-bottom-color: var(--border);
+  background: var(--surface-2);
+}
+.run-family > summary::-webkit-details-marker { display: none; }
+.run-family-chevron {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-right: 1.5px solid var(--foreground-muted);
+  border-bottom: 1.5px solid var(--foreground-muted);
+  transform: rotate(-45deg);
+  transition: transform var(--transition-fast);
+  flex-shrink: 0;
+}
+.run-family[open] > summary .run-family-chevron { transform: rotate(45deg); }
+.run-family-select-all { margin: 0; accent-color: var(--foreground); cursor: pointer; }
+.run-family-name { font-size: 14px; font-weight: 700; color: var(--foreground); }
+.run-family-stats {
+  color: var(--foreground-muted);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+.run-family-warning {
+  margin-left: auto;
+  color: var(--accent-amber);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.run-variant-list {
+  display: flex;
+  flex-direction: column;
+}
+.run-variant-row {
+  display: grid;
+  grid-template-columns: 20px minmax(60px, max-content) minmax(0, 1fr) 80px auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background var(--transition-fast);
+}
+.run-variant-row:last-child { border-bottom: none; }
+.run-variant-row:hover { background: var(--surface-2); }
+.run-variant-row.is-non-fit { opacity: 0.45; }
+.run-variant-select { margin: 0; accent-color: var(--foreground); cursor: pointer; }
+.run-variant-quant {
+  font-weight: 700;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.run-variant-file {
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-variant-size {
+  color: var(--foreground-muted);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: right;
+}
+.run-variant-badges {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.badge--cached { background: var(--success-bg); color: var(--success); }
+.badge--warn { background: var(--accent-amber-bg); color: var(--accent-amber); }
+
+/* Progress table — piggybacks on .results-table styling. */
+.run-progress-table { font-variant-numeric: tabular-nums; }
+.run-progress-table th.num,
+.run-progress-table td.num { text-align: right; }
+.run-row-queued { color: var(--foreground-subtle); }
+.run-row-running td { background: var(--accent-blue-bg); }
+.run-row-ok { color: var(--foreground-secondary); }
+.run-row-error td { color: var(--error); }
+.run-row-error td.err { font-family: var(--font-mono); font-size: 12px; }
+
+/* Output block. */
+.run-output { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+.run-output-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--foreground-secondary);
+  cursor: pointer;
+}
+.run-output-toggle input[type="checkbox"] { accent-color: var(--foreground); }
+.run-output-textarea {
+  width: 100%;
+  min-height: 320px;
+  padding: 12px;
+  background: var(--surface-0);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+}
+.run-output-textarea:focus {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px rgba(82, 82, 91, 0.3);
+}
+.run-output-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Log panel — collapsible details inside a .card. */
+.run-log { padding: 0; }
+.run-log > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 16px;
+  color: var(--foreground-muted);
+  font-size: 13px;
+  font-weight: 500;
+  transition: color var(--transition-fast);
+}
+.run-log > summary::-webkit-details-marker { display: none; }
+.run-log > summary:hover { color: var(--foreground); }
+.run-log[open] > summary { border-bottom: 1px solid var(--border); }
+.run-log-pre {
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 12px 16px;
+  background: var(--surface-0);
+  color: var(--foreground-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 768px) {
+  .run-actions { margin-left: 0; width: 100%; }
+  .run-variant-row {
+    grid-template-columns: 20px minmax(50px, max-content) minmax(0, 1fr);
+    row-gap: 4px;
+  }
+  .run-variant-size { grid-column: 2; text-align: left; }
+  .run-variant-badges { grid-column: 3; justify-content: flex-start; }
+  .hub-row-inner { flex-direction: column; align-items: stretch; }
+  .hub-row-actions { justify-content: flex-start; }
+}

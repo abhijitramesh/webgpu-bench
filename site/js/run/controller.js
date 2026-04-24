@@ -1,16 +1,15 @@
-// Interactive benchmark page controller.
-// Mode detection (local vs hosted), model list rendering with device-fit
-// check + filter chips, Download / Run / Abort orchestration, results output.
-// Inference logic lives in bench-core.js — this file drives the UI and
-// sequences one runBenchmarkCore() call per selected variant.
+// Run-tab controller. Mounts into the existing #run-section subtree and
+// drives the one-click benchmark UI using the dashboard's design-system
+// classes. Detects `surface` (localhost / space / pages) to gate the
+// server save checkbox and the HF hub sign-in/submit row.
 
-import { runBenchmarkCore } from './bench-core.js';
-import { localSource, hostedSource, inventoryOpfs, purgeOpfs } from './bench-source.js';
-import { getDeviceBudgetMB, variantFits, describeDevice } from './bench-device.js';
+import { runBenchmarkCore } from './core.js';
+import { localSource, hostedSource, inventoryOpfs, purgeOpfs } from './source.js';
+import { getDeviceBudgetMB, variantFits, describeDevice } from './device.js';
 import {
   resumeHFSession, beginHFSignIn, signOutHF, submitResultsToDataset,
-} from './bench-hub.js';
-import { isHubConfigured, HF_DATASET_REPO } from './bench-config.js';
+} from './hub.js';
+import { isHubConfigured, HF_DATASET_REPO } from './config.js';
 
 const OVERHEAD = 1.5;
 const DEFAULT_PROMPT =
@@ -25,42 +24,69 @@ const DEFAULT_ITERATIONS = 5;
 const MIN_ITERATIONS_FOR_SUBMIT = 5;
 
 const state = {
-  mode: 'local',        // 'local' | 'hosted'
-  source: null,         // localSource() | hostedSource()
-  models: null,         // parsed models.json
-  budget: null,         // { budgetMB, memGB, quotaMB, source }
-  device: null,         // describeDevice() output
-  cacheStatus: {},      // { 'repo/file': { cachedBytes } }
-  variants: [],         // flat variant rows with metadata
+  surface: 'pages',    // 'localhost' | 'space' | 'pages' | 'file'
+  source: null,        // localSource() | hostedSource()
+  models: null,        // parsed models.json
+  budget: null,        // { budgetMB, memGB, quotaMB, source }
+  device: null,        // describeDevice() output
+  cacheStatus: {},     // { 'repo/file': { cachedBytes } }
+  variants: [],        // flat variant rows with metadata
   running: false,
   aborted: false,
-  results: [],          // result records from the current session
-  hfSession: null,      // { accessToken, expiresAt, userName } when signed in
+  results: [],         // result records from the current session
+  hfSession: null,     // { accessToken, expiresAt, userName } when signed in
   iterations: DEFAULT_ITERATIONS,
+  mounted: false,
 };
 
-// ──────────────── mode / data loading ────────────────
+// ──────────────── surface detection ────────────────
 
-async function detectMode() {
+async function detectSurface() {
   const params = new URLSearchParams(location.search);
-  if (params.get('mode') === 'hosted') return 'hosted';
-  if (params.get('mode') === 'local') return 'local';
-  try {
-    const r = await fetch('/api/models', { method: 'HEAD' });
-    if (r.ok) return 'local';
-  } catch { /* fall through */ }
-  return 'hosted';
+  if (params.get('mode') === 'local') return 'localhost';
+  if (params.get('mode') === 'hosted') return 'space';
+  if (/\.static\.hf\.space$/.test(location.hostname)) return 'space';
+  if (/\.github\.io$/.test(location.hostname)) return 'pages';
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    try {
+      const r = await fetch('/api/models', { method: 'HEAD' });
+      if (r.ok) return 'localhost';
+    } catch { /* no backend */ }
+  }
+  if (location.protocol === 'file:') return 'file';
+  return 'pages';
 }
 
+function canSubmit() {
+  return state.surface === 'localhost'
+    || (state.surface === 'space' && isHubConfigured());
+}
+
+// ──────────────── data loading ────────────────
+
 async function loadModels() {
-  const url = state.mode === 'local' ? '/api/models' : './models.json';
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`${url} ${r.status}`);
-  return r.json();
+  // Candidates in order — the Run page lives at /site/run/ locally but may be
+  // flattened to Space root. Relative `../models.json` catches the local case;
+  // `./models.json` catches the flattened case; absolute `/models.json` catches
+  // Space root too; `/api/models` is the Express backend.
+  const candidates = state.surface === 'localhost'
+    ? ['/api/models', '../models.json', './models.json', '/models.json']
+    : ['./models.json', '../models.json', '/models.json', './data/models.json'];
+  let lastErr = null;
+  for (const url of candidates) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) return await r.json();
+      lastErr = new Error(`${url} → ${r.status}`);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error('Could not load models.json');
 }
 
 async function loadCacheStatus() {
-  if (state.mode === 'local') {
+  if (state.surface === 'localhost') {
     try {
       const r = await fetch('/api/cache-status');
       if (r.ok) return r.json();
@@ -124,31 +150,54 @@ function $(id) { return document.getElementById(id); }
 function renderHeader() {
   const d = state.device;
   const b = state.budget;
-  $('mode-badge').textContent = state.mode;
+
+  const badge = $('run-mode-badge');
+  if (badge) {
+    badge.textContent = state.surface;
+    badge.className = `badge run-mode-badge run-mode-${state.surface}`;
+  }
 
   const uaShort = d.userAgent.match(/(Firefox|Chrome|CriOS|Edg|Safari)\/[\d.]+/)?.[0] || 'browser';
   const gpuStr = d.gpu
     ? [d.gpu.vendor, d.gpu.architecture, d.gpu.device].filter(Boolean).join(' ').trim()
-    : 'no WebGPU';
-  $('device-line').textContent = `${uaShort} · ${d.platform || 'unknown'} · ${gpuStr || 'WebGPU info unavailable'}`;
+    : '';
 
-  const pieces = [];
-  if (b.memGB !== null) pieces.push(`deviceMemory ${b.memGB} GB`);
-  if (b.quotaMB !== null) pieces.push(`storage quota ${(b.quotaMB / 1024).toFixed(1)} GB`);
+  $('device-browser').textContent = uaShort;
+  $('device-platform').textContent = d.platform || 'unknown';
+  $('device-gpu').textContent = gpuStr || (d.webgpu ? 'WebGPU (no info)' : 'no WebGPU');
+
+  const memStr = b.memGB !== null ? `${b.memGB} GB` : '—';
+  $('device-memory').textContent = memStr;
+
   const budgetGB = (b.budgetMB / 1024).toFixed(1);
-  $('budget-line').textContent =
-    `Model budget: ~${budgetGB} GB · ${pieces.join(' · ') || 'using default'} · source: ${b.source}`;
+  $('device-budget').textContent = `${budgetGB} GB`;
+  $('device-budget-source').textContent = `source: ${b.source}`;
 
-  $('output-actions-local').hidden = state.mode !== 'local';
-  const hubSection = $('hub-section');
-  if (hubSection) hubSection.hidden = state.mode !== 'hosted';
+  const webgpuCell = $('device-webgpu');
+  if (webgpuCell) {
+    webgpuCell.textContent = d.webgpu ? 'yes' : 'no';
+    webgpuCell.classList.toggle('text-success', d.webgpu);
+    webgpuCell.classList.toggle('text-error', !d.webgpu);
+  }
+
+  // Surface-dependent UI gating.
+  const hubRow = $('hub-row');
+  if (hubRow) hubRow.hidden = state.surface !== 'space';
+
+  const saveLocalRow = $('save-local-row');
+  if (saveLocalRow) saveLocalRow.hidden = state.surface !== 'localhost';
+
+  const pagesBanner = $('run-pages-banner');
+  if (pagesBanner) pagesBanner.hidden = state.surface !== 'pages';
+
   const purgeBtn = $('btn-purge');
-  if (purgeBtn) purgeBtn.hidden = state.mode !== 'hosted';
+  if (purgeBtn) purgeBtn.hidden = state.surface === 'localhost';
+
   renderHfSection();
 }
 
 function renderHfSection() {
-  if (state.mode !== 'hosted') return;
+  if (state.surface !== 'space') return;
   const signinBtn = $('btn-signin');
   const submitBtn = $('btn-submit');
   const userEl = $('hf-user');
@@ -157,7 +206,7 @@ function renderHfSection() {
   if (!isHubConfigured()) {
     signinBtn.disabled = true;
     signinBtn.textContent = 'HF hub not configured';
-    signinBtn.title = 'Set HF_DATASET_REPO in bench-config.js';
+    signinBtn.title = 'Set HF_DATASET_REPO in site/js/run/config.js';
     submitBtn.hidden = true;
     userEl.textContent = '';
     return;
@@ -186,7 +235,7 @@ function renderHfSection() {
 }
 
 function renderModels() {
-  const panel = $('models-panel');
+  const panel = $('run-models');
   panel.innerHTML = '';
 
   const groups = groupByFamily(state.variants);
@@ -195,71 +244,81 @@ function renderModels() {
     const allFit = fitsCount === variants.length;
 
     const familyEl = document.createElement('details');
-    familyEl.className = 'family';
+    familyEl.className = 'run-family card';
     familyEl.dataset.family = family;
     familyEl.open = true;
 
     const summary = document.createElement('summary');
+    summary.className = 'run-family-summary';
     summary.innerHTML = `
-      <input type="checkbox" class="family-select-all" data-family="${escapeAttr(family)}"${allFit ? ' checked' : ''}>
-      <span class="family-name">${escapeText(family)}</span>
-      <span class="family-stats">(${variants.length} variants, ${fitsCount} fit)</span>
+      <span class="run-family-chevron" aria-hidden="true"></span>
+      <input type="checkbox" class="run-family-select-all" data-family="${escapeAttr(family)}"${allFit ? ' checked' : ''}>
+      <span class="run-family-name">${escapeText(family)}</span>
+      <span class="run-family-stats">${variants.length} variants · ${fitsCount} fit</span>
     `;
     if (/^granite-4/i.test(family)) {
       const w = document.createElement('span');
-      w.className = 'family-warnings';
+      w.className = 'run-family-warning';
       w.textContent = '⚠ needs SSM_SCAN in llama.cpp';
       summary.appendChild(w);
     }
     familyEl.appendChild(summary);
 
+    const list = document.createElement('div');
+    list.className = 'run-variant-list';
+
     for (const v of variants) {
       const row = document.createElement('label');
-      row.className = 'variant-row';
-      if (!variantFitsDevice(v)) row.classList.add('non-fit');
+      row.className = 'run-variant-row';
+      if (!variantFitsDevice(v)) row.classList.add('is-non-fit');
       row.dataset.key = cacheKey(v);
 
       const cb = document.createElement('input');
       cb.type = 'checkbox';
-      cb.className = 'variant-select';
+      cb.className = 'run-variant-select';
       cb.dataset.key = cacheKey(v);
       cb.checked = variantFitsDevice(v);
 
-      const label = document.createElement('span');
-      label.className = 'variant-label';
-      label.innerHTML = `<b>${escapeText(v.quant)}</b> · <code>${escapeText(v.filename)}</code>`;
+      const quant = document.createElement('span');
+      quant.className = 'run-variant-quant';
+      quant.textContent = v.quant;
+
+      const filename = document.createElement('code');
+      filename.className = 'run-variant-file';
+      filename.textContent = v.filename;
 
       const size = document.createElement('span');
-      size.className = 'size';
+      size.className = 'run-variant-size';
       size.textContent = v.sizeMB > 0 ? formatSize(v.sizeMB) : '?';
 
       const badges = document.createElement('span');
-      badges.className = 'badges';
+      badges.className = 'run-variant-badges';
       updateBadgesForVariant(badges, v);
 
-      row.append(cb, label, size, badges);
-      familyEl.appendChild(row);
+      row.append(cb, quant, filename, size, badges);
+      list.appendChild(row);
     }
+    familyEl.appendChild(list);
     panel.appendChild(familyEl);
   }
 }
 
 function updateBadgesForVariant(badgesEl, v) {
   badgesEl.innerHTML = '';
-  if (isCached(v)) badgesEl.appendChild(makeBadge('cached', 'cache-badge'));
-  for (const w of v.warnings) badgesEl.appendChild(makeBadge(w, 'warn-badge'));
+  if (isCached(v)) badgesEl.appendChild(makeBadge('cached', 'badge--cached'));
+  for (const w of v.warnings) badgesEl.appendChild(makeBadge(w, 'badge--warn'));
 }
 
 function refreshCacheBadge(v) {
-  const row = document.querySelector(`.variant-row[data-key="${cssEscape(cacheKey(v))}"]`);
+  const row = document.querySelector(`.run-variant-row[data-key="${cssEscape(cacheKey(v))}"]`);
   if (!row) return;
-  const badges = row.querySelector('.badges');
+  const badges = row.querySelector('.run-variant-badges');
   if (badges) updateBadgesForVariant(badges, v);
 }
 
 function makeBadge(text, cls) {
   const el = document.createElement('span');
-  el.className = cls;
+  el.className = `badge ${cls}`;
   el.textContent = text;
   return el;
 }
@@ -281,25 +340,32 @@ function cssEscape(s) {
 // ──────────────── selection / filters ────────────────
 
 function wireSelectionHandlers() {
-  document.querySelectorAll('.family-select-all').forEach(el => {
-    el.addEventListener('change', () => {
-      const family = el.dataset.family;
-      const rows = document.querySelectorAll(
-        `details.family[data-family="${cssEscape(family)}"] .variant-select`,
+  const panel = $('run-models');
+  panel.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.classList?.contains('run-family-select-all')) {
+      const family = t.dataset.family;
+      const rows = panel.querySelectorAll(
+        `details.run-family[data-family="${cssEscape(family)}"] .run-variant-select`,
       );
-      rows.forEach(cb => { cb.checked = el.checked; });
+      rows.forEach(cb => { cb.checked = t.checked; });
       updateButtons();
-    });
-    el.addEventListener('click', e => e.stopPropagation());
+    } else if (t.classList?.contains('run-variant-select')) {
+      updateButtons();
+    }
   });
-  document.querySelectorAll('.variant-select').forEach(el => {
-    el.addEventListener('change', updateButtons);
+  // Prevent the select-all toggling expand/collapse.
+  panel.addEventListener('click', (e) => {
+    if (e.target.classList?.contains('run-family-select-all')) {
+      e.stopPropagation();
+    }
   });
 }
 
 function wireFilters() {
   ['hide-ud', 'hide-iq', 'hide-hifp'].forEach(id => {
-    $(id).addEventListener('change', applyFilters);
+    const el = $(id);
+    if (el) el.addEventListener('change', applyFilters);
   });
 }
 
@@ -321,10 +387,10 @@ function submittableResults() {
 }
 
 function applyFilters() {
-  const hideUd = $('hide-ud').checked;
-  const hideIq = $('hide-iq').checked;
-  const hideHifp = $('hide-hifp').checked;
-  document.querySelectorAll('.variant-row').forEach(row => {
+  const hideUd = $('hide-ud')?.checked;
+  const hideIq = $('hide-iq')?.checked;
+  const hideHifp = $('hide-hifp')?.checked;
+  document.querySelectorAll('.run-variant-row').forEach(row => {
     const v = state.variants.find(x => cacheKey(x) === row.dataset.key);
     if (!v) return;
     const isUd = v.quant.startsWith('UD-');
@@ -336,7 +402,7 @@ function applyFilters() {
 }
 
 function getCheckedVariants() {
-  return Array.from(document.querySelectorAll('.variant-select:checked'))
+  return Array.from(document.querySelectorAll('.run-variant-select:checked'))
     .map(cb => state.variants.find(v => cacheKey(v) === cb.dataset.key))
     .filter(Boolean);
 }
@@ -344,26 +410,54 @@ function getCheckedVariants() {
 function updateButtons() {
   const checked = getCheckedVariants();
   const cachedChecked = checked.filter(isCached);
-  $('btn-download').disabled = state.running || checked.length === 0;
-  $('btn-run').disabled = state.running || cachedChecked.length === 0;
-  $('btn-abort').disabled = !state.running;
-  $('queue-status').textContent = checked.length
-    ? `${checked.length} selected · ${cachedChecked.length} cached`
-    : '';
+  const dl = $('btn-download'); if (dl) dl.disabled = state.running || checked.length === 0;
+  const rn = $('btn-run'); if (rn) rn.disabled = state.running || cachedChecked.length === 0;
+  const ab = $('btn-abort'); if (ab) { ab.disabled = !state.running; ab.hidden = !state.running; }
+  const status = $('queue-status');
+  if (status) {
+    status.textContent = checked.length
+      ? `${checked.length} selected · ${cachedChecked.length} cached`
+      : '';
+  }
 }
 
 // ──────────────── progress table ────────────────
 
-function showProgressPanel() { $('progress-panel').hidden = false; }
+function ensureProgressTable() {
+  const wrap = $('run-progress-wrapper');
+  if (!wrap) return null;
+  let table = wrap.querySelector('table');
+  if (!table) {
+    table = document.createElement('table');
+    table.className = 'results-table run-progress-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Variant</th>
+          <th>Status</th>
+          <th class="num">Prefill tok/s</th>
+          <th class="num">Decode tok/s</th>
+          <th class="num">Wall s</th>
+          <th>Error</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+    wrap.appendChild(table);
+  }
+  return table;
+}
 
 function progressRowFor(v) {
   const key = cacheKey(v);
-  const tbody = $('progress-table').querySelector('tbody');
+  const table = ensureProgressTable();
+  const tbody = table.querySelector('tbody');
   let tr = tbody.querySelector(`tr[data-key="${cssEscape(key)}"]`);
   if (!tr) {
     tr = document.createElement('tr');
     tr.dataset.key = key;
-    tr.className = 'row-queued';
+    tr.className = 'run-row-queued';
     tr.innerHTML = `
       <td>${escapeText(v.modelName)}</td>
       <td>${escapeText(v.quant)}</td>
@@ -377,7 +471,7 @@ function progressRowFor(v) {
   }
   return {
     setStatus(status, msg) {
-      tr.className = `row-${rowClassFor(status)}`;
+      tr.className = `run-row-${rowClassFor(status)}`;
       tr.querySelector('.status').textContent = msg ? `${status} — ${msg}` : status;
     },
     setProgress(fraction, downloaded, total) {
@@ -388,7 +482,7 @@ function progressRowFor(v) {
       tr.querySelector('.status').textContent = detail ? `downloading ${detail}` : 'downloading';
     },
     fillFromRecord(record) {
-      tr.className = `row-${record.status === 'done' ? 'ok' : 'error'}`;
+      tr.className = `run-row-${record.status === 'done' ? 'ok' : 'error'}`;
       tr.querySelector('.status').textContent = record.status;
       tr.querySelector('.prefill').textContent = record.metrics?.prefill_tok_s ?? '—';
       tr.querySelector('.decode').textContent = record.metrics?.decode_tok_s ?? '—';
@@ -480,7 +574,6 @@ async function onDownloadClick() {
   state.running = true;
   state.aborted = false;
   updateButtons();
-  showProgressPanel();
 
   for (const v of variants) {
     if (state.aborted) break;
@@ -508,9 +601,9 @@ async function onDownloadClick() {
     }
   }
 
-  // Refresh cache inventory from server to reconcile any partial downloads.
+  // Refresh cache inventory to reconcile any partial downloads.
   state.cacheStatus = await loadCacheStatus();
-  document.querySelectorAll('.variant-row').forEach(row => {
+  document.querySelectorAll('.run-variant-row').forEach(row => {
     const v = state.variants.find(x => cacheKey(x) === row.dataset.key);
     if (v) refreshCacheBadge(v);
   });
@@ -529,7 +622,6 @@ async function onRunClick() {
   state.aborted = false;
   state.results = [];
   updateButtons();
-  showProgressPanel();
 
   const machine = await machineInfo();
   const browser = browserInfo();
@@ -551,7 +643,7 @@ async function onRunClick() {
       localStorage.setItem('webgpu-bench:lastRun', JSON.stringify(state.results));
     } catch { /* quota */ }
 
-    if (state.mode === 'local' && $('save-local')?.checked) {
+    if (state.surface === 'localhost' && $('save-local')?.checked) {
       fetch('/api/results', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -627,9 +719,6 @@ async function runVariantWithIterations(v, row) {
         nPredict: DEFAULT_N_PREDICT,
         nCtx: DEFAULT_N_CTX,
         nGpuLayers: DEFAULT_N_GPU_LAYERS,
-        // Only the first iteration runs the consistency check — the result
-        // is deterministic with greedy decoding, so subsequent iterations
-        // would just repeat the same check.
         refTokenIds: i === 0 ? (refTokenIds || null) : null,
         onStatus: (s, m) => row.setStatus(`gpu${i + 1}/${s}`, m),
         onProgress: (fr, d, t) => row.setProgress(fr, d, t),
@@ -699,7 +788,6 @@ function makeRecord(v, vr, machine, browser, wallTimeMs) {
     prefill_samples: vr.gpuSamples.map(s => round2(s.prefill_tok_s)),
     decode_samples: vr.gpuSamples.map(s => round2(s.decode_tok_s)),
     iterations: vr.iterations,
-    // Retain first-iteration detail for backward-compat with dashboard tables.
     n_p_eval: first.n_p_eval,
     n_eval: first.n_eval,
     t_p_eval_ms: first.t_p_eval_ms,
@@ -733,7 +821,7 @@ function makeRecord(v, vr, machine, browser, wallTimeMs) {
     cpu_baseline: cpuBaseline,
     output: vr.gpuCore?.output || '',
     machine,
-    source: 'bench.html',
+    source: `webgpu-bench/site (${state.surface})`,
   };
 }
 
@@ -742,8 +830,8 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // ──────────────── Output ────────────────
 
 function renderOutput() {
-  $('output-textarea').value = generateMarkdown(state.results);
-  $('output-panel').hidden = false;
+  const ta = $('output-textarea');
+  if (ta) ta.value = generateMarkdown(state.results);
 }
 
 function generateMarkdown(results) {
@@ -791,7 +879,7 @@ function generateMarkdown(results) {
 }
 
 function wireOutputHandlers() {
-  $('btn-copy').addEventListener('click', async () => {
+  $('btn-copy')?.addEventListener('click', async () => {
     const text = $('output-textarea').value;
     try {
       await navigator.clipboard.writeText(text);
@@ -802,7 +890,7 @@ function wireOutputHandlers() {
     }
   });
 
-  $('btn-download-json').addEventListener('click', () => {
+  $('btn-download-json')?.addEventListener('click', () => {
     if (state.results.length === 0) return;
     const blob = new Blob([JSON.stringify(state.results, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -821,12 +909,13 @@ function flashButton(el, msg) {
   setTimeout(() => { el.textContent = original; }, 1200);
 }
 
-// ──────────────── Abort ────────────────
+// ──────────────── Abort / Purge / Hub ────────────────
 
 function wireAbortHandler() {
-  $('btn-abort').addEventListener('click', () => {
+  $('btn-abort')?.addEventListener('click', () => {
     state.aborted = true;
-    $('btn-abort').disabled = true;
+    const ab = $('btn-abort');
+    if (ab) ab.disabled = true;
     logLine('Abort requested — will stop between variants.');
   });
 }
@@ -835,12 +924,12 @@ function wirePurgeHandler() {
   const btn = $('btn-purge');
   if (!btn) return;
   btn.addEventListener('click', async () => {
-    if (state.mode !== 'hosted') return;
+    if (state.surface === 'localhost') return;
     if (!confirm('Delete all cached GGUF files from OPFS? This frees browser storage but re-downloads will be needed.')) return;
     try {
       await purgeOpfs();
       state.cacheStatus = {};
-      document.querySelectorAll('.variant-row').forEach(row => {
+      document.querySelectorAll('.run-variant-row').forEach(row => {
         const v = state.variants.find(x => cacheKey(x) === row.dataset.key);
         if (v) refreshCacheBadge(v);
       });
@@ -902,23 +991,34 @@ function wireHubHandlers() {
 }
 
 function wireRunHandlers() {
-  $('btn-download').addEventListener('click', onDownloadClick);
-  $('btn-run').addEventListener('click', onRunClick);
+  $('btn-download')?.addEventListener('click', onDownloadClick);
+  $('btn-run')?.addEventListener('click', onRunClick);
 }
 
-// ──────────────── Init ────────────────
+// ──────────────── Public API ────────────────
 
-async function init() {
-  state.mode = await detectMode();
-  state.source = state.mode === 'local' ? localSource() : hostedSource();
+export async function mountRunSection() {
+  if (state.mounted) return;
+  state.mounted = true;
+
+  state.surface = await detectSurface();
+  state.source = state.surface === 'localhost' ? localSource() : hostedSource();
   state.budget = await getDeviceBudgetMB();
   state.device = await describeDevice();
-  state.models = await loadModels();
+
+  try {
+    state.models = await loadModels();
+  } catch (err) {
+    const panel = $('run-models');
+    if (panel) panel.innerHTML = `<div class="empty-state">Could not load models.json — ${escapeText(err.message)}</div>`;
+    console.error(err);
+    return;
+  }
+
   state.cacheStatus = await loadCacheStatus();
   state.variants = flattenVariants(state.models);
 
-  // Resume any existing HF OAuth session / complete redirect flow.
-  if (state.mode === 'hosted') {
+  if (state.surface === 'space') {
     try { state.hfSession = await resumeHFSession(); } catch { /* ignore */ }
   }
 
@@ -935,8 +1035,8 @@ async function init() {
   updateButtons();
 }
 
-init().catch(err => {
-  const el = $('models-loading');
-  if (el) el.textContent = `Error loading models: ${err.message}`;
-  console.error(err);
-});
+export function teardownRunSection() {
+  // Placeholder — no explicit teardown today. Future: abort in-flight runs,
+  // detach listeners. For now the Run tab just sits idle.
+  state.aborted = true;
+}

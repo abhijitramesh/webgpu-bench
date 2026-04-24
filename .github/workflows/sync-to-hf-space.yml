@@ -4,20 +4,14 @@ on:
   push:
     branches: [main]
     paths:
-      - 'bench.html'
-      - 'bench-*.js'
-      - 'bench.css'
+      - 'site/**'
       - 'harness.html'
       - 'harness.js'
-      - 'bench-core.js'
-      - 'bench-source.js'
-      - 'bench-device.js'
-      - 'bench-hub.js'
-      - 'bench-config.js'
       - 'models.json'
       - 'build/jspi/**'
       - 'build/asyncify/**'
       - 'spaces/**'
+      - 'scripts/build-site.js'
       - '.github/workflows/sync-to-hf-space.yml'
   workflow_dispatch:
 
@@ -44,15 +38,26 @@ jobs:
         with:
           lfs: true
 
+      - name: Build combined.json + copy models.json into site/
+        if: env.SKIP != '1'
+        run: |
+          if [ -d data/machines ]; then
+            node scripts/build-site.js
+          else
+            # No machine data committed — just mirror models.json into site/.
+            cp models.json site/models.json
+          fi
+
       - name: Stage deploy assets
         if: env.SKIP != '1'
         run: |
           mkdir -p _deploy
-          cp bench.html _deploy/index.html
-          cp bench.html bench.css bench-app.js bench-core.js bench-source.js \
-             bench-device.js bench-hub.js bench-config.js _deploy/
+          # Flatten site/ to Space root: index.html, css/, js/, data/, models.json, methodology.html, ...
+          cp -R site/. _deploy/
+          # Harness drives runner.js and lives at Space root alongside index.html.
           cp harness.html harness.js _deploy/
-          cp models.json _deploy/
+          # Space README (with hf_oauth + app_file frontmatter) overrides any
+          # README that might have been copied from site/.
           cp spaces/README.md _deploy/README.md
           # WASM artifacts are gitignored. If a prior local build committed
           # them as bin/bench.{js,wasm}, sync them; otherwise the Space keeps
