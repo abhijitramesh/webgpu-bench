@@ -56,6 +56,21 @@
           <span>Read-only mode — to submit benchmarks, open the canonical <a href="https://abhijitramesh-webgpu-bench.static.hf.space/run.html" target="_blank" rel="noopener">HF Space</a>.</span>
         </div>
 
+        <!-- Mobile-device warning: tabs on iOS/Android get reaped under
+             memory pressure, so benchmarks often crash and the tab silently
+             reloads. Shown by the controller when isMobileDevice() is true. -->
+        <div id="run-mobile-banner" class="run-pages-banner" hidden>
+          <span>Mobile device detected — the per-tab memory budget is tight, and larger quants will likely crash this tab. For representative numbers, run from a laptop or desktop.</span>
+        </div>
+
+        <!-- Crash-recovery banner: set by the controller when a previous
+             Run started but never posted a success, suggesting the tab got
+             reaped mid-run. Appears on the next page load. -->
+        <div id="run-crash-banner" class="run-pages-banner" hidden>
+          <span id="run-crash-banner-text"></span>
+          <button id="run-crash-banner-dismiss" class="btn btn-secondary btn-xs" type="button">Dismiss</button>
+        </div>
+
         <!-- HF sign-in + submit (space surface only) -->
         <div id="hub-row" class="card hub-row" hidden>
           <div class="hub-row-inner">
@@ -155,6 +170,10 @@
           <label id="save-local-row" class="run-output-toggle" hidden>
             <input type="checkbox" id="save-local" checked>
             Save to <code>results/results.json</code> on this server
+          </label>
+          <label id="evict-after-row" class="run-output-toggle">
+            <input type="checkbox" id="evict-after-run">
+            Evict cached GGUFs after each run (frees disk/OPFS as the queue moves)
           </label>
           <textarea id="output-textarea" class="run-output-textarea" readonly spellcheck="false" aria-label="Benchmark results output (JSON)" placeholder="Run benchmarks to generate output here…"></textarea>
           <div class="run-output-buttons">

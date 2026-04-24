@@ -39,6 +39,18 @@ export function localSource() {
         source: 'localProxy',
       };
     },
+
+    async evictModel(repo, file) {
+      try {
+        const r = await fetch(`/api/cache/${repo}/${file}`, { method: 'DELETE' });
+        if (r.status === 404) return { ok: false, bytesFreed: 0, reason: 'not cached' };
+        if (!r.ok) return { ok: false, bytesFreed: 0, reason: `${r.status} ${r.statusText}` };
+        const body = await r.json().catch(() => ({}));
+        return { ok: true, bytesFreed: body.bytesFreed || 0 };
+      } catch (err) {
+        return { ok: false, bytesFreed: 0, reason: err.message };
+      }
+    },
   };
 }
 
@@ -125,6 +137,23 @@ export function hostedSource() {
         contentLength,
         source: 'hf-direct',
       };
+    },
+
+    async evictModel(repo, file) {
+      try {
+        const dir = await getOpfsDirFor(repo, { create: false });
+        // Read size first so we can report it, then remove.
+        let bytesFreed = 0;
+        try {
+          const handle = await dir.getFileHandle(file, { create: false });
+          const f = await handle.getFile();
+          bytesFreed = f.size;
+        } catch { /* not present */ }
+        await dir.removeEntry(file);
+        return { ok: true, bytesFreed };
+      } catch (err) {
+        return { ok: false, bytesFreed: 0, reason: err.message };
+      }
     },
   };
 }

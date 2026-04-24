@@ -3,13 +3,15 @@
 // classes. Detects `surface` (localhost / space / pages) to gate the
 // server save checkbox and the HF hub sign-in/submit row.
 
-import { runBenchmarkCore } from './core.js';
 import { localSource, hostedSource, inventoryOpfs, purgeOpfs } from './source.js';
 import { getDeviceBudgetMB, variantFits, describeDevice } from './device.js';
 import {
   resumeHFSession, beginHFSignIn, signOutHF, submitResultsToDataset,
 } from './hub.js';
 import { isHubConfigured, HF_DATASET_REPO } from './config.js';
+
+const RUN_INTENT_STORAGE_KEY = 'webgpu-bench:runIntent';
+const CRASH_STALE_MS = 10_000;
 
 const OVERHEAD = 1.5;
 const DEFAULT_PROMPT =
@@ -27,7 +29,7 @@ const state = {
   surface: 'pages',    // 'localhost' | 'space' | 'pages' | 'file'
   source: null,        // localSource() | hostedSource()
   models: null,        // parsed models.json
-  budget: null,        // { budgetMB, memGB, quotaMB, source }
+  budget: null,        // { budgetMB, memGB, quotaMB, probedMB, isMobile, source }
   device: null,        // describeDevice() output
   cacheStatus: {},     // { 'repo/file': { cachedBytes } }
   variants: [],        // flat variant rows with metadata
@@ -37,6 +39,12 @@ const state = {
   hfSession: null,     // { accessToken, expiresAt, userName } when signed in
   iterations: DEFAULT_ITERATIONS,
   mounted: false,
+  // Tracks variants the Run pipeline downloaded this session (as opposed to
+  // the standalone Download button or pre-existing cache). Only these are
+  // candidates for post-run eviction when the user has opted in.
+  sessionDownloads: new Set(),
+  // Handle to the currently-running worker, so Abort can terminate it.
+  currentWorker: null,
 };
 
 // ──────────────── surface detection ────────────────
@@ -204,6 +212,9 @@ function renderHeader() {
 
   const pagesBanner = $('run-pages-banner');
   if (pagesBanner) pagesBanner.hidden = state.surface !== 'pages';
+
+  const mobileBanner = $('run-mobile-banner');
+  if (mobileBanner) mobileBanner.hidden = !state.budget?.isMobile;
 
   const purgeBtn = $('btn-purge');
   if (purgeBtn) purgeBtn.hidden = state.surface === 'localhost';
@@ -531,7 +542,10 @@ function updateButtons() {
   const checked = getCheckedVariants();
   const cachedChecked = checked.filter(isCached);
   const dl = $('btn-download'); if (dl) dl.disabled = state.running || checked.length === 0;
-  const rn = $('btn-run'); if (rn) rn.disabled = state.running || cachedChecked.length === 0;
+  // Run is now allowed even when nothing is cached — the pipeline downloads
+  // on demand. (Download button remains for the "pre-cache without running"
+  // workflow.)
+  const rn = $('btn-run'); if (rn) rn.disabled = state.running || checked.length === 0;
   const ab = $('btn-abort'); if (ab) { ab.disabled = !state.running; ab.hidden = !state.running; }
   const status = $('queue-status');
   if (status) {
@@ -751,29 +765,81 @@ async function onDownloadClick() {
 // ──────────────── Run ────────────────
 
 async function onRunClick() {
-  const variants = getCheckedVariants().filter(isCached);
+  // Run accepts any checked variant — uncached ones download just-in-time.
+  const variants = getCheckedVariants();
   if (variants.length === 0) return;
 
   state.running = true;
   state.aborted = false;
   state.results = [];
+  state.sessionDownloads = new Set();
   updateButtons();
 
   const machine = await machineInfo();
   const browser = browserInfo();
+  const evictAfter = !!$('evict-after-run')?.checked;
 
-  for (const v of variants) {
-    if (state.aborted) break;
+  // One-ahead prefetch: while variant i runs, we may have variant i+1
+  // downloading. Only one prefetch in flight at a time.
+  const prefetchFor = async (v) => {
+    if (!v || isCached(v)) return;
     const row = progressRowFor(v);
+    row.setStatus('prefetching', '');
+    try {
+      const { stream, contentLength } = await state.source.fetchModel(v.repo, v.filename);
+      const reader = stream.getReader();
+      let read = 0;
+      while (true) {
+        if (state.aborted) { try { reader.cancel(); } catch {} return; }
+        const { done, value } = await reader.read();
+        if (done) break;
+        read += value.length;
+        row.setProgress(contentLength ? read / contentLength : 0, read, contentLength);
+      }
+      state.cacheStatus[cacheKey(v)] = { cachedBytes: read };
+      state.sessionDownloads.add(cacheKey(v));
+      refreshCacheBadge(v);
+      row.setStatus('cached', formatSize(read / (1024 * 1024)));
+    } catch (err) {
+      row.setStatus('error', `prefetch: ${err.message}`);
+      logLine(`Prefetch failed: ${v.filename}: ${err.message}`);
+    }
+  };
+
+  // Seed the first prefetch before the loop so variant 0 starts downloading
+  // while we set up. The loop awaits each prefetch completion before running.
+  let prefetchPromise = prefetchFor(variants[0]);
+
+  for (let i = 0; i < variants.length; i++) {
+    if (state.aborted) break;
+    const v = variants[i];
+    const row = progressRowFor(v);
+
+    // Wait for variant i to be cached (either via prefetch or pre-existing).
+    await prefetchPromise;
+    if (state.aborted) break;
+    if (!isCached(v)) {
+      row.setStatus('error', 'not cached after prefetch');
+      prefetchPromise = prefetchFor(variants[i + 1]);
+      continue;
+    }
+
+    // Kick off prefetch of i+1 in parallel with the run of i.
+    prefetchPromise = prefetchFor(variants[i + 1]);
+
+    // Persist run intent so a tab crash leaves a breadcrumb.
+    writeRunIntent(v);
+
     row.setStatus('running', '');
     const start = performance.now();
-
     const variantResult = await runVariantWithIterations(v, row);
-
     const wallTimeMs = performance.now() - start;
+
     const record = makeRecord(v, variantResult, machine, browser, wallTimeMs);
     state.results.push(record);
     row.fillFromRecord(record);
+
+    clearRunIntent();
 
     try {
       localStorage.setItem('webgpu-bench:lastRun', JSON.stringify(state.results));
@@ -787,13 +853,117 @@ async function onRunClick() {
       }).catch(err => logLine(`POST /api/results failed: ${err.message}`));
     }
 
+    // Evict if enabled and this variant was downloaded this session. Files
+    // the user had cached before the run are always preserved.
+    if (evictAfter && state.sessionDownloads.has(cacheKey(v))) {
+      try {
+        const res = await state.source.evictModel(v.repo, v.filename);
+        if (res.ok) {
+          logLine(`Evicted ${v.filename} (${formatSize(res.bytesFreed / (1024 * 1024))})`);
+          delete state.cacheStatus[cacheKey(v)];
+          state.sessionDownloads.delete(cacheKey(v));
+          refreshCacheBadge(v);
+        } else {
+          logLine(`Eviction skipped (${v.filename}): ${res.reason}`);
+        }
+      } catch (err) {
+        logLine(`Eviction error (${v.filename}): ${err.message}`);
+      }
+    }
+
     await sleep(YIELD_BETWEEN_RUNS_MS);
   }
+
+  // Queue ended or aborted: make sure we don't leave a prefetch running.
+  try { await prefetchPromise; } catch { /* already logged */ }
 
   renderOutput();
   state.running = false;
   updateButtons();
   renderHfSection();
+}
+
+// Spawn a dedicated worker, transfer the stream + params, relay events back
+// into the provided callbacks, resolve with the worker's final record.
+// The worker is terminated (and state.currentWorker cleared) when done.
+function runInWorker({
+  params,
+  stream,
+  onStatus,
+  onProgress,
+  onLog,
+}) {
+  return new Promise((resolve) => {
+    let worker;
+    try {
+      worker = new Worker(new URL('./bench-worker.js', import.meta.url));
+    } catch (err) {
+      resolve({ status: 'error', error: `worker construct failed: ${err.message}` });
+      return;
+    }
+
+    state.currentWorker = worker;
+    let settled = false;
+    const finish = (record) => {
+      if (settled) return;
+      settled = true;
+      try { worker.terminate(); } catch { /* noop */ }
+      if (state.currentWorker === worker) state.currentWorker = null;
+      resolve(record);
+    };
+
+    worker.onmessage = (e) => {
+      const msg = e.data || {};
+      if (msg.type === 'status') onStatus?.(msg.status, msg.msg);
+      else if (msg.type === 'progress') onProgress?.(msg.fraction, msg.downloaded, msg.total);
+      else if (msg.type === 'log') onLog?.(msg.line);
+      else if (msg.type === 'result') finish(msg.record);
+    };
+    worker.onerror = (err) => {
+      finish({
+        status: 'error',
+        error: err?.message || 'worker error (tab likely out of memory)',
+      });
+    };
+    worker.onmessageerror = () => {
+      finish({ status: 'error', error: 'worker message deserialization failed' });
+    };
+
+    try {
+      worker.postMessage({ type: 'run', params, stream }, [stream]);
+    } catch (err) {
+      finish({ status: 'error', error: `postMessage failed: ${err.message}` });
+    }
+  });
+}
+
+// Fetch the model through the source adapter and hand the stream to a
+// freshly-spawned worker. Returns a record shaped like runBenchmarkCore().
+async function runBenchmarkInWorker(v, params, callbacks) {
+  let fetched;
+  try {
+    fetched = await state.source.fetchModel(v.repo, v.filename);
+  } catch (err) {
+    return { status: 'error', error: `fetchModel failed: ${err.message}` };
+  }
+
+  const record = await runInWorker({
+    params: {
+      buildType: 'Suspending' in WebAssembly ? 'jspi' : 'asyncify',
+      prompt: params.prompt,
+      nPredict: params.nPredict,
+      nCtx: params.nCtx,
+      nGpuLayers: params.nGpuLayers,
+      refTokenIds: params.refTokenIds,
+      contentLength: fetched.contentLength,
+    },
+    stream: fetched.stream,
+    onStatus: callbacks.onStatus,
+    onProgress: callbacks.onProgress,
+    onLog: callbacks.onLog,
+  });
+
+  return record;
 }
 
 // Runs one variant: CPU baseline (1x, for reference token IDs + consistency),
@@ -806,15 +976,13 @@ async function runVariantWithIterations(v, row) {
   row.setStatus('cpu-baseline', 'generating reference tokens');
   let cpuResult;
   try {
-    cpuResult = await runBenchmarkCore({
-      source: state.source,
-      modelFile: v.filename,
-      hfRepo: v.repo,
+    cpuResult = await runBenchmarkInWorker(v, {
       prompt: DEFAULT_PROMPT,
       nPredict: DEFAULT_N_PREDICT,
       nCtx: DEFAULT_N_CTX,
       nGpuLayers: 0,
       refTokenIds: null,
+    }, {
       onStatus: (status, msg) => row.setStatus(`cpu/${status}`, msg),
       onProgress: (fr, downloaded, total) => row.setProgress(fr, downloaded, total),
       onLog: logLine,
@@ -847,15 +1015,13 @@ async function runVariantWithIterations(v, row) {
     row.setStatus('gpu-run', `iteration ${i + 1}/${iterations}`);
     let gpuResult;
     try {
-      gpuResult = await runBenchmarkCore({
-        source: state.source,
-        modelFile: v.filename,
-        hfRepo: v.repo,
+      gpuResult = await runBenchmarkInWorker(v, {
         prompt: DEFAULT_PROMPT,
         nPredict: DEFAULT_N_PREDICT,
         nCtx: DEFAULT_N_CTX,
         nGpuLayers: DEFAULT_N_GPU_LAYERS,
         refTokenIds: i === 0 ? (refTokenIds || null) : null,
+      }, {
         onStatus: (s, m) => row.setStatus(`gpu${i + 1}/${s}`, m),
         onProgress: (fr, d, t) => row.setProgress(fr, d, t),
         onLog: logLine,
@@ -962,6 +1128,66 @@ function makeRecord(v, vr, machine, browser, wallTimeMs) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ──────────────── crash-recovery trail ────────────────
+//
+// Mobile tabs often get reaped mid-run without warning — WebKit reloads the
+// page and the user sees a silent reset. We stamp localStorage before each
+// variant; if a stamp is present on page load and we can't match it against
+// a successful result in lastRun, we assume a crash and surface a banner.
+
+function writeRunIntent(v) {
+  try {
+    localStorage.setItem(RUN_INTENT_STORAGE_KEY, JSON.stringify({
+      model: v.modelName,
+      quant: v.quant,
+      filename: v.filename,
+      sizeMB: v.sizeMB,
+      when: Date.now(),
+    }));
+  } catch { /* quota / disabled */ }
+}
+
+function clearRunIntent() {
+  try { localStorage.removeItem(RUN_INTENT_STORAGE_KEY); } catch {}
+}
+
+function maybeShowCrashBanner() {
+  const banner = $('run-crash-banner');
+  const text = $('run-crash-banner-text');
+  const dismiss = $('run-crash-banner-dismiss');
+  if (!banner || !text || !dismiss) return;
+
+  let intent;
+  try {
+    const raw = localStorage.getItem(RUN_INTENT_STORAGE_KEY);
+    if (!raw) return;
+    intent = JSON.parse(raw);
+  } catch {
+    clearRunIntent();
+    return;
+  }
+  if (!intent || typeof intent.when !== 'number') {
+    clearRunIntent();
+    return;
+  }
+  if (Date.now() - intent.when < CRASH_STALE_MS) {
+    // Too fresh — another tab might still be running. Leave it alone.
+    return;
+  }
+
+  // Intent survived the page reload and is stale: the run almost certainly
+  // didn't finish cleanly (we clear the intent on success).
+  const size = intent.sizeMB ? formatSize(intent.sizeMB) : 'unknown size';
+  text.textContent =
+    `A previous run on "${intent.model} ${intent.quant}" (${size}) did not complete — the tab was likely reaped by the OS (low memory). Try a smaller quant.`;
+  banner.hidden = false;
+
+  dismiss.addEventListener('click', () => {
+    banner.hidden = true;
+    clearRunIntent();
+  }, { once: true });
+}
 
 // ──────────────── Output ────────────────
 
@@ -1072,7 +1298,15 @@ function wireAbortHandler() {
     state.aborted = true;
     const ab = $('btn-abort');
     if (ab) ab.disabled = true;
-    logLine('Abort requested — will stop between variants.');
+    // Terminating the worker immediately stops the in-flight iteration —
+    // JSPI/Asyncify loops don't respond to cooperative signals.
+    if (state.currentWorker) {
+      try { state.currentWorker.terminate(); } catch {}
+      state.currentWorker = null;
+      logLine('Abort requested — terminated in-flight worker.');
+    } else {
+      logLine('Abort requested — will stop between variants.');
+    }
   });
 }
 
@@ -1178,6 +1412,14 @@ export async function mountRunSection() {
     try { state.hfSession = await resumeHFSession(); } catch { /* ignore */ }
   }
 
+  // Evict-after-run default depends on surface: hosted OPFS quota is tight
+  // and worth clawing back between runs; localhost's cache/models/ is
+  // commonly shared with CLI workflows, so leaving it populated is helpful.
+  const evictCheckbox = $('evict-after-run');
+  if (evictCheckbox) {
+    evictCheckbox.checked = state.surface === 'space';
+  }
+
   renderHeader();
   renderModels();
   wireSelectionHandlers();
@@ -1192,6 +1434,7 @@ export async function mountRunSection() {
   updateButtons();
   renderOutput();
   hideProgressUntilFirstRow();
+  maybeShowCrashBanner();
 }
 
 export function teardownRunSection() {

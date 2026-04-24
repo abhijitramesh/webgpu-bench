@@ -149,6 +149,32 @@ export function startServer(port = 3000, { noCache = false } = {}) {
       }
     });
 
+    // Evict a single cached model file. Used by the Run page's rolling-cache
+     // pipeline to free disk between variants.
+    app.delete('/api/cache/*', (req, res) => {
+      const relPath = req.params[0];
+      if (!relPath) {
+        res.status(400).json({ error: 'Missing path' });
+        return;
+      }
+      const resolved = path.resolve(CACHE_DIR, relPath);
+      if (!resolved.startsWith(CACHE_DIR + path.sep) && resolved !== CACHE_DIR) {
+        res.status(400).json({ error: 'Invalid path' });
+        return;
+      }
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+        res.status(404).json({ error: 'Not cached' });
+        return;
+      }
+      const bytesFreed = fs.statSync(resolved).size;
+      try {
+        fs.unlinkSync(resolved);
+        res.json({ ok: true, bytesFreed });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     app.get('/models/*', async (req, res) => {
       const modelPath = req.params[0];
       const cachePath = path.join(CACHE_DIR, modelPath);
