@@ -86,10 +86,13 @@ jobs:
           # If the staging bundle included build/*/bench.{js,wasm}, sync
           # those too; otherwise exclude build/** so the Space's manually-
           # uploaded WASM is preserved across CI runs.
+          # --exclude='.git' preserves git internals; --exclude='.gitattributes'
+          # preserves HF's LFS/Xet tracking rules for .wasm; --exclude='build/**'
+          # preserves any manually-uploaded WASM when CI doesn't have a local build.
           if [ -d ../_deploy/build ]; then
-            RSYNC_EXCLUDES=(--exclude='.git')
+            RSYNC_EXCLUDES=(--exclude='.git' --exclude='.gitattributes')
           else
-            RSYNC_EXCLUDES=(--exclude='.git' --exclude='build/**')
+            RSYNC_EXCLUDES=(--exclude='.git' --exclude='.gitattributes' --exclude='build/**')
           fi
           rsync -a --delete "${RSYNC_EXCLUDES[@]}" ../_deploy/ ./
           git add -A
