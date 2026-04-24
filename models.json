@@ -7,278 +7,137 @@
         {
           "quant": "BF16",
           "filename": "Llama-3.2-1B-Instruct-BF16.gguf",
-          "sizeMB": 2480
+          "sizeMB": 2364.73
         },
         {
           "quant": "F16",
           "filename": "Llama-3.2-1B-Instruct-F16.gguf",
-          "sizeMB": 2480
+          "sizeMB": 2364.73
         },
         {
           "quant": "IQ4_NL",
           "filename": "Llama-3.2-1B-Instruct-IQ4_NL.gguf",
-          "sizeMB": 773
+          "sizeMB": 737.21
         },
         {
           "quant": "IQ4_XS",
           "filename": "Llama-3.2-1B-Instruct-IQ4_XS.gguf",
-          "sizeMB": 743
+          "sizeMB": 708.71
         },
         {
           "quant": "Q2_K",
           "filename": "Llama-3.2-1B-Instruct-Q2_K.gguf",
-          "sizeMB": 581
+          "sizeMB": 553.96
         },
         {
           "quant": "Q2_K_L",
           "filename": "Llama-3.2-1B-Instruct-Q2_K_L.gguf",
-          "sizeMB": 581
+          "sizeMB": 553.96
         },
         {
           "quant": "Q3_K_M",
           "filename": "Llama-3.2-1B-Instruct-Q3_K_M.gguf",
-          "sizeMB": 691
+          "sizeMB": 658.84
         },
         {
           "quant": "Q3_K_S",
           "filename": "Llama-3.2-1B-Instruct-Q3_K_S.gguf",
-          "sizeMB": 642
+          "sizeMB": 611.96
         },
         {
           "quant": "Q4_0",
           "filename": "Llama-3.2-1B-Instruct-Q4_0.gguf",
-          "sizeMB": 773
+          "sizeMB": 737.21
         },
         {
           "quant": "Q4_1",
           "filename": "Llama-3.2-1B-Instruct-Q4_1.gguf",
-          "sizeMB": 832
+          "sizeMB": 793.21
         },
         {
           "quant": "Q4_K_M",
           "filename": "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
-          "sizeMB": 808
+          "sizeMB": 770.28
         },
         {
           "quant": "Q4_K_S",
           "filename": "Llama-3.2-1B-Instruct-Q4_K_S.gguf",
-          "sizeMB": 776
+          "sizeMB": 739.71
         },
         {
           "quant": "Q5_K_M",
           "filename": "Llama-3.2-1B-Instruct-Q5_K_M.gguf",
-          "sizeMB": 912
+          "sizeMB": 869.28
         },
         {
           "quant": "Q5_K_S",
           "filename": "Llama-3.2-1B-Instruct-Q5_K_S.gguf",
-          "sizeMB": 893
+          "sizeMB": 851.21
         },
         {
           "quant": "Q6_K",
           "filename": "Llama-3.2-1B-Instruct-Q6_K.gguf",
-          "sizeMB": 1022
+          "sizeMB": 974.46
         },
         {
           "quant": "Q8_0",
           "filename": "Llama-3.2-1B-Instruct-Q8_0.gguf",
-          "sizeMB": 1321
+          "sizeMB": 1259.88
         },
         {
           "quant": "UD-IQ1_M",
           "filename": "Llama-3.2-1B-Instruct-UD-IQ1_M.gguf",
-          "sizeMB": 439
+          "sizeMB": 418.84
         },
         {
           "quant": "UD-IQ1_S",
           "filename": "Llama-3.2-1B-Instruct-UD-IQ1_S.gguf",
-          "sizeMB": 422
+          "sizeMB": 402.09
         },
         {
           "quant": "UD-IQ2_M",
           "filename": "Llama-3.2-1B-Instruct-UD-IQ2_M.gguf",
-          "sizeMB": 536
+          "sizeMB": 511.48
         },
         {
           "quant": "UD-IQ2_XXS",
           "filename": "Llama-3.2-1B-Instruct-UD-IQ2_XXS.gguf",
-          "sizeMB": 464
+          "sizeMB": 442.82
         },
         {
           "quant": "UD-IQ3_XXS",
           "filename": "Llama-3.2-1B-Instruct-UD-IQ3_XXS.gguf",
-          "sizeMB": 575
+          "sizeMB": 548.73
         },
         {
           "quant": "UD-Q2_K_XL",
           "filename": "Llama-3.2-1B-Instruct-UD-Q2_K_XL.gguf",
-          "sizeMB": 606
+          "sizeMB": 577.48
         },
         {
           "quant": "UD-Q3_K_XL",
           "filename": "Llama-3.2-1B-Instruct-UD-Q3_K_XL.gguf",
-          "sizeMB": 724
+          "sizeMB": 690.46
         },
         {
           "quant": "UD-Q4_K_XL",
           "filename": "Llama-3.2-1B-Instruct-UD-Q4_K_XL.gguf",
-          "sizeMB": 834
+          "sizeMB": 795.56
         },
         {
           "quant": "UD-Q5_K_XL",
           "filename": "Llama-3.2-1B-Instruct-UD-Q5_K_XL.gguf",
-          "sizeMB": 920
+          "sizeMB": 877.41
         },
         {
           "quant": "UD-Q6_K_XL",
           "filename": "Llama-3.2-1B-Instruct-UD-Q6_K_XL.gguf",
-          "sizeMB": 1191
+          "sizeMB": 1135.88
         },
         {
           "quant": "UD-Q8_K_XL",
           "filename": "Llama-3.2-1B-Instruct-UD-Q8_K_XL.gguf",
-          "sizeMB": 1844
-        }
-      ]
-    },
-    {
-      "repo": "unsloth/Llama-3.2-3B-Instruct-GGUF",
-      "name": "Llama-3.2-3B-Instruct",
-      "variants": [
-        {
-          "quant": "BF16",
-          "filename": "Llama-3.2-3B-Instruct-BF16.gguf",
-          "sizeMB": 6434
-        },
-        {
-          "quant": "F16",
-          "filename": "Llama-3.2-3B-Instruct-F16.gguf",
-          "sizeMB": 6434
-        },
-        {
-          "quant": "IQ4_NL",
-          "filename": "Llama-3.2-3B-Instruct-IQ4_NL.gguf",
-          "sizeMB": 1917
-        },
-        {
-          "quant": "IQ4_XS",
-          "filename": "Llama-3.2-3B-Instruct-IQ4_XS.gguf",
-          "sizeMB": 1829
-        },
-        {
-          "quant": "Q2_K",
-          "filename": "Llama-3.2-3B-Instruct-Q2_K.gguf",
-          "sizeMB": 1364
-        },
-        {
-          "quant": "Q2_K_L",
-          "filename": "Llama-3.2-3B-Instruct-Q2_K_L.gguf",
-          "sizeMB": 1364
-        },
-        {
-          "quant": "Q3_K_M",
-          "filename": "Llama-3.2-3B-Instruct-Q3_K_M.gguf",
-          "sizeMB": 1687
-        },
-        {
-          "quant": "Q3_K_S",
-          "filename": "Llama-3.2-3B-Instruct-Q3_K_S.gguf",
-          "sizeMB": 1543
-        },
-        {
-          "quant": "Q4_0",
-          "filename": "Llama-3.2-3B-Instruct-Q4_0.gguf",
-          "sizeMB": 1922
-        },
-        {
-          "quant": "Q4_1",
-          "filename": "Llama-3.2-3B-Instruct-Q4_1.gguf",
-          "sizeMB": 2093
-        },
-        {
-          "quant": "Q4_K_M",
-          "filename": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-          "sizeMB": 2019
-        },
-        {
-          "quant": "Q4_K_S",
-          "filename": "Llama-3.2-3B-Instruct-Q4_K_S.gguf",
-          "sizeMB": 1928
-        },
-        {
-          "quant": "Q5_K_M",
-          "filename": "Llama-3.2-3B-Instruct-Q5_K_M.gguf",
-          "sizeMB": 2322
-        },
-        {
-          "quant": "Q5_K_S",
-          "filename": "Llama-3.2-3B-Instruct-Q5_K_S.gguf",
-          "sizeMB": 2270
-        },
-        {
-          "quant": "Q6_K",
-          "filename": "Llama-3.2-3B-Instruct-Q6_K.gguf",
-          "sizeMB": 2644
-        },
-        {
-          "quant": "Q8_0",
-          "filename": "Llama-3.2-3B-Instruct-Q8_0.gguf",
-          "sizeMB": 3422
-        },
-        {
-          "quant": "UD-IQ1_M",
-          "filename": "Llama-3.2-3B-Instruct-UD-IQ1_M.gguf",
-          "sizeMB": 960
-        },
-        {
-          "quant": "UD-IQ1_S",
-          "filename": "Llama-3.2-3B-Instruct-UD-IQ1_S.gguf",
-          "sizeMB": 912
-        },
-        {
-          "quant": "UD-IQ2_M",
-          "filename": "Llama-3.2-3B-Instruct-UD-IQ2_M.gguf",
-          "sizeMB": 1256
-        },
-        {
-          "quant": "UD-IQ2_XXS",
-          "filename": "Llama-3.2-3B-Instruct-UD-IQ2_XXS.gguf",
-          "sizeMB": 1047
-        },
-        {
-          "quant": "UD-IQ3_XXS",
-          "filename": "Llama-3.2-3B-Instruct-UD-IQ3_XXS.gguf",
-          "sizeMB": 1370
-        },
-        {
-          "quant": "UD-Q2_K_XL",
-          "filename": "Llama-3.2-3B-Instruct-UD-Q2_K_XL.gguf",
-          "sizeMB": 1403
-        },
-        {
-          "quant": "UD-Q3_K_XL",
-          "filename": "Llama-3.2-3B-Instruct-UD-Q3_K_XL.gguf",
-          "sizeMB": 1742
-        },
-        {
-          "quant": "UD-Q4_K_XL",
-          "filename": "Llama-3.2-3B-Instruct-UD-Q4_K_XL.gguf",
-          "sizeMB": 2061
-        },
-        {
-          "quant": "UD-Q5_K_XL",
-          "filename": "Llama-3.2-3B-Instruct-UD-Q5_K_XL.gguf",
-          "sizeMB": 2328
-        },
-        {
-          "quant": "UD-Q6_K_XL",
-          "filename": "Llama-3.2-3B-Instruct-UD-Q6_K_XL.gguf",
-          "sizeMB": 2968
-        },
-        {
-          "quant": "UD-Q8_K_XL",
-          "filename": "Llama-3.2-3B-Instruct-UD-Q8_K_XL.gguf",
-          "sizeMB": 4204
+          "sizeMB": 1758.16
         }
       ]
     },
@@ -289,258 +148,122 @@
         {
           "quant": "F16",
           "filename": "gemma-3-270m-it-F16.gguf",
-          "sizeMB": 543
+          "sizeMB": 517.69
         },
         {
           "quant": "IQ4_NL",
           "filename": "gemma-3-270m-it-IQ4_NL.gguf",
-          "sizeMB": 242
+          "sizeMB": 230.75
         },
         {
           "quant": "IQ4_XS",
           "filename": "gemma-3-270m-it-IQ4_XS.gguf",
-          "sizeMB": 241
+          "sizeMB": 229.7
         },
         {
           "quant": "Q2_K",
           "filename": "gemma-3-270m-it-Q2_K.gguf",
-          "sizeMB": 237
+          "sizeMB": 226.1
         },
         {
           "quant": "Q2_K_L",
           "filename": "gemma-3-270m-it-Q2_K_L.gguf",
-          "sizeMB": 237
+          "sizeMB": 226.1
         },
         {
           "quant": "Q3_K_M",
           "filename": "gemma-3-270m-it-Q3_K_M.gguf",
-          "sizeMB": 242
+          "sizeMB": 230.75
         },
         {
           "quant": "Q3_K_S",
           "filename": "gemma-3-270m-it-Q3_K_S.gguf",
-          "sizeMB": 237
+          "sizeMB": 225.75
         },
         {
           "quant": "Q4_0",
           "filename": "gemma-3-270m-it-Q4_0.gguf",
-          "sizeMB": 242
+          "sizeMB": 230.38
         },
         {
           "quant": "Q4_1",
           "filename": "gemma-3-270m-it-Q4_1.gguf",
-          "sizeMB": 248
+          "sizeMB": 236.2
         },
         {
           "quant": "Q4_K_M",
           "filename": "gemma-3-270m-it-Q4_K_M.gguf",
-          "sizeMB": 253
+          "sizeMB": 241.39
         },
         {
           "quant": "Q4_K_S",
           "filename": "gemma-3-270m-it-Q4_K_S.gguf",
-          "sizeMB": 250
+          "sizeMB": 238.31
         },
         {
           "quant": "Q5_K_M",
           "filename": "gemma-3-270m-it-Q5_K_M.gguf",
-          "sizeMB": 260
+          "sizeMB": 247.98
         },
         {
           "quant": "Q5_K_S",
           "filename": "gemma-3-270m-it-Q5_K_S.gguf",
-          "sizeMB": 258
+          "sizeMB": 246.05
         },
         {
           "quant": "Q6_K",
           "filename": "gemma-3-270m-it-Q6_K.gguf",
-          "sizeMB": 283
+          "sizeMB": 269.87
         },
         {
           "quant": "Q8_0",
           "filename": "gemma-3-270m-it-Q8_0.gguf",
-          "sizeMB": 292
+          "sizeMB": 278.04
         },
         {
           "quant": "UD-IQ2_M",
           "filename": "gemma-3-270m-it-UD-IQ2_M.gguf",
-          "sizeMB": 183
+          "sizeMB": 174.32
         },
         {
           "quant": "UD-IQ2_XXS",
           "filename": "gemma-3-270m-it-UD-IQ2_XXS.gguf",
-          "sizeMB": 180
+          "sizeMB": 171.76
         },
         {
           "quant": "UD-IQ3_XXS",
           "filename": "gemma-3-270m-it-UD-IQ3_XXS.gguf",
-          "sizeMB": 185
+          "sizeMB": 175.97
         },
         {
           "quant": "UD-Q2_K_XL",
           "filename": "gemma-3-270m-it-UD-Q2_K_XL.gguf",
-          "sizeMB": 238
+          "sizeMB": 226.73
         },
         {
           "quant": "UD-Q3_K_XL",
           "filename": "gemma-3-270m-it-UD-Q3_K_XL.gguf",
-          "sizeMB": 243
+          "sizeMB": 231.38
         },
         {
           "quant": "UD-Q4_K_XL",
           "filename": "gemma-3-270m-it-UD-Q4_K_XL.gguf",
-          "sizeMB": 254
+          "sizeMB": 242.17
         },
         {
           "quant": "UD-Q5_K_XL",
           "filename": "gemma-3-270m-it-UD-Q5_K_XL.gguf",
-          "sizeMB": 260
+          "sizeMB": 247.98
         },
         {
           "quant": "UD-Q6_K_XL",
           "filename": "gemma-3-270m-it-UD-Q6_K_XL.gguf",
-          "sizeMB": 286
+          "sizeMB": 272.89
         },
         {
           "quant": "UD-Q8_K_XL",
           "filename": "gemma-3-270m-it-UD-Q8_K_XL.gguf",
-          "sizeMB": 471
-        }
-      ]
-    },
-    {
-      "repo": "unsloth/gemma-3-1b-it-GGUF",
-      "name": "gemma-3-1b-it",
-      "variants": [
-        {
-          "quant": "BF16",
-          "filename": "gemma-3-1b-it-BF16.gguf",
-          "sizeMB": 2007
-        },
-        {
-          "quant": "IQ4_NL",
-          "filename": "gemma-3-1b-it-IQ4_NL.gguf",
-          "sizeMB": 722
-        },
-        {
-          "quant": "IQ4_XS",
-          "filename": "gemma-3-1b-it-IQ4_XS.gguf",
-          "sizeMB": 714
-        },
-        {
-          "quant": "Q2_K",
-          "filename": "gemma-3-1b-it-Q2_K.gguf",
-          "sizeMB": 690
-        },
-        {
-          "quant": "Q2_K_L",
-          "filename": "gemma-3-1b-it-Q2_K_L.gguf",
-          "sizeMB": 690
-        },
-        {
-          "quant": "Q3_K_M",
-          "filename": "gemma-3-1b-it-Q3_K_M.gguf",
-          "sizeMB": 722
-        },
-        {
-          "quant": "Q3_K_S",
-          "filename": "gemma-3-1b-it-Q3_K_S.gguf",
-          "sizeMB": 689
-        },
-        {
-          "quant": "Q4_0",
-          "filename": "gemma-3-1b-it-Q4_0.gguf",
-          "sizeMB": 722
-        },
-        {
-          "quant": "Q4_1",
-          "filename": "gemma-3-1b-it-Q4_1.gguf",
-          "sizeMB": 764
-        },
-        {
-          "quant": "Q4_K_M",
-          "filename": "gemma-3-1b-it-Q4_K_M.gguf",
-          "sizeMB": 806
-        },
-        {
-          "quant": "Q4_K_S",
-          "filename": "gemma-3-1b-it-Q4_K_S.gguf",
-          "sizeMB": 781
-        },
-        {
-          "quant": "Q5_K_M",
-          "filename": "gemma-3-1b-it-Q5_K_M.gguf",
-          "sizeMB": 851
-        },
-        {
-          "quant": "Q5_K_S",
-          "filename": "gemma-3-1b-it-Q5_K_S.gguf",
-          "sizeMB": 836
-        },
-        {
-          "quant": "Q6_K",
-          "filename": "gemma-3-1b-it-Q6_K.gguf",
-          "sizeMB": 1012
-        },
-        {
-          "quant": "Q8_0",
-          "filename": "gemma-3-1b-it-Q8_0.gguf",
-          "sizeMB": 1069
-        },
-        {
-          "quant": "UD-IQ1_M",
-          "filename": "gemma-3-1b-it-UD-IQ1_M.gguf",
-          "sizeMB": 560
-        },
-        {
-          "quant": "UD-IQ1_S",
-          "filename": "gemma-3-1b-it-UD-IQ1_S.gguf",
-          "sizeMB": 557
-        },
-        {
-          "quant": "UD-IQ2_M",
-          "filename": "gemma-3-1b-it-UD-IQ2_M.gguf",
-          "sizeMB": 578
-        },
-        {
-          "quant": "UD-IQ2_XXS",
-          "filename": "gemma-3-1b-it-UD-IQ2_XXS.gguf",
-          "sizeMB": 564
-        },
-        {
-          "quant": "UD-IQ3_XXS",
-          "filename": "gemma-3-1b-it-UD-IQ3_XXS.gguf",
-          "sizeMB": 592
-        },
-        {
-          "quant": "UD-Q2_K_XL",
-          "filename": "gemma-3-1b-it-UD-Q2_K_XL.gguf",
-          "sizeMB": 694
-        },
-        {
-          "quant": "UD-Q3_K_XL",
-          "filename": "gemma-3-1b-it-UD-Q3_K_XL.gguf",
-          "sizeMB": 727
-        },
-        {
-          "quant": "UD-Q4_K_XL",
-          "filename": "gemma-3-1b-it-UD-Q4_K_XL.gguf",
-          "sizeMB": 807
-        },
-        {
-          "quant": "UD-Q5_K_XL",
-          "filename": "gemma-3-1b-it-UD-Q5_K_XL.gguf",
-          "sizeMB": 874
-        },
-        {
-          "quant": "UD-Q6_K_XL",
-          "filename": "gemma-3-1b-it-UD-Q6_K_XL.gguf",
-          "sizeMB": 1031
-        },
-        {
-          "quant": "UD-Q8_K_XL",
-          "filename": "gemma-3-1b-it-UD-Q8_K_XL.gguf",
-          "sizeMB": 1478
+          "sizeMB": 449.28
         }
       ]
     },
@@ -551,268 +274,299 @@
         {
           "quant": "BF16",
           "filename": "Qwen3-0.6B-BF16.gguf",
-          "sizeMB": 1198
+          "sizeMB": 1142.68
         },
         {
           "quant": "IQ4_NL",
           "filename": "Qwen3-0.6B-IQ4_NL.gguf",
-          "sizeMB": 382
+          "sizeMB": 363.89
         },
         {
           "quant": "IQ4_XS",
           "filename": "Qwen3-0.6B-IQ4_XS.gguf",
-          "sizeMB": 368
+          "sizeMB": 350.77
         },
         {
           "quant": "Q2_K",
           "filename": "Qwen3-0.6B-Q2_K.gguf",
-          "sizeMB": 296
+          "sizeMB": 282.52
         },
         {
           "quant": "Q2_K_L",
           "filename": "Qwen3-0.6B-Q2_K_L.gguf",
-          "sizeMB": 296
+          "sizeMB": 282.52
         },
         {
           "quant": "Q3_K_M",
           "filename": "Qwen3-0.6B-Q3_K_M.gguf",
-          "sizeMB": 347
+          "sizeMB": 331.05
         },
         {
           "quant": "Q3_K_S",
           "filename": "Qwen3-0.6B-Q3_K_S.gguf",
-          "sizeMB": 323
+          "sizeMB": 308.11
         },
         {
           "quant": "Q4_0",
           "filename": "Qwen3-0.6B-Q4_0.gguf",
-          "sizeMB": 382
+          "sizeMB": 364.45
         },
         {
           "quant": "Q4_1",
           "filename": "Qwen3-0.6B-Q4_1.gguf",
-          "sizeMB": 409
+          "sizeMB": 390.14
         },
         {
           "quant": "Q4_K_M",
           "filename": "Qwen3-0.6B-Q4_K_M.gguf",
-          "sizeMB": 397
+          "sizeMB": 378.33
         },
         {
           "quant": "Q4_K_S",
           "filename": "Qwen3-0.6B-Q4_K_S.gguf",
-          "sizeMB": 383
+          "sizeMB": 365.52
         },
         {
           "quant": "Q5_K_M",
           "filename": "Qwen3-0.6B-Q5_K_M.gguf",
-          "sizeMB": 444
+          "sizeMB": 423.83
         },
         {
           "quant": "Q5_K_S",
           "filename": "Qwen3-0.6B-Q5_K_S.gguf",
-          "sizeMB": 437
+          "sizeMB": 416.39
         },
         {
           "quant": "Q6_K",
           "filename": "Qwen3-0.6B-Q6_K.gguf",
-          "sizeMB": 495
+          "sizeMB": 472.17
         },
         {
           "quant": "Q8_0",
           "filename": "Qwen3-0.6B-Q8_0.gguf",
-          "sizeMB": 639
+          "sizeMB": 609.82
         },
         {
           "quant": "UD-IQ1_M",
           "filename": "Qwen3-0.6B-UD-IQ1_M.gguf",
-          "sizeMB": 221
+          "sizeMB": 210.53
         },
         {
           "quant": "UD-IQ1_S",
           "filename": "Qwen3-0.6B-UD-IQ1_S.gguf",
-          "sizeMB": 215
+          "sizeMB": 204.7
         },
         {
           "quant": "UD-IQ2_M",
           "filename": "Qwen3-0.6B-UD-IQ2_M.gguf",
-          "sizeMB": 269
+          "sizeMB": 256.25
         },
         {
           "quant": "UD-IQ2_XXS",
           "filename": "Qwen3-0.6B-UD-IQ2_XXS.gguf",
-          "sizeMB": 234
+          "sizeMB": 223.23
         },
         {
           "quant": "UD-IQ3_XXS",
           "filename": "Qwen3-0.6B-UD-IQ3_XXS.gguf",
-          "sizeMB": 282
+          "sizeMB": 269.02
         },
         {
           "quant": "UD-Q2_K_XL",
           "filename": "Qwen3-0.6B-UD-Q2_K_XL.gguf",
-          "sizeMB": 302
+          "sizeMB": 287.75
         },
         {
           "quant": "UD-Q3_K_XL",
           "filename": "Qwen3-0.6B-UD-Q3_K_XL.gguf",
-          "sizeMB": 357
+          "sizeMB": 340.1
         },
         {
           "quant": "UD-Q4_K_XL",
           "filename": "Qwen3-0.6B-UD-Q4_K_XL.gguf",
-          "sizeMB": 405
+          "sizeMB": 386.59
         },
         {
           "quant": "UD-Q5_K_XL",
           "filename": "Qwen3-0.6B-UD-Q5_K_XL.gguf",
-          "sizeMB": 446
+          "sizeMB": 425.7
         },
         {
           "quant": "UD-Q6_K_XL",
           "filename": "Qwen3-0.6B-UD-Q6_K_XL.gguf",
-          "sizeMB": 576
+          "sizeMB": 549.76
         },
         {
           "quant": "UD-Q8_K_XL",
           "filename": "Qwen3-0.6B-UD-Q8_K_XL.gguf",
-          "sizeMB": 844
+          "sizeMB": 805.18
         }
       ]
     },
     {
-      "repo": "unsloth/Qwen3-1.7B-GGUF",
-      "name": "Qwen3-1.7B",
+      "repo": "LiquidAI/LFM2.5-350M-GGUF",
+      "name": "LFM2.5-350M",
       "variants": [
         {
           "quant": "BF16",
-          "filename": "Qwen3-1.7B-BF16.gguf",
-          "sizeMB": 3447
+          "filename": "LFM2.5-350M-BF16.gguf",
+          "sizeMB": 678.53
         },
         {
-          "quant": "IQ4_NL",
-          "filename": "Qwen3-1.7B-IQ4_NL.gguf",
-          "sizeMB": 1054
-        },
-        {
-          "quant": "IQ4_XS",
-          "filename": "Qwen3-1.7B-IQ4_XS.gguf",
-          "sizeMB": 1010
-        },
-        {
-          "quant": "Q2_K",
-          "filename": "Qwen3-1.7B-Q2_K.gguf",
-          "sizeMB": 778
-        },
-        {
-          "quant": "Q2_K_L",
-          "filename": "Qwen3-1.7B-Q2_K_L.gguf",
-          "sizeMB": 778
-        },
-        {
-          "quant": "Q3_K_M",
-          "filename": "Qwen3-1.7B-Q3_K_M.gguf",
-          "sizeMB": 940
-        },
-        {
-          "quant": "Q3_K_S",
-          "filename": "Qwen3-1.7B-Q3_K_S.gguf",
-          "sizeMB": 867
+          "quant": "F16",
+          "filename": "LFM2.5-350M-F16.gguf",
+          "sizeMB": 678.53
         },
         {
           "quant": "Q4_0",
-          "filename": "Qwen3-1.7B-Q4_0.gguf",
-          "sizeMB": 1057
-        },
-        {
-          "quant": "Q4_1",
-          "filename": "Qwen3-1.7B-Q4_1.gguf",
-          "sizeMB": 1143
+          "filename": "LFM2.5-350M-Q4_0.gguf",
+          "sizeMB": 209.15
         },
         {
           "quant": "Q4_K_M",
-          "filename": "Qwen3-1.7B-Q4_K_M.gguf",
-          "sizeMB": 1107
-        },
-        {
-          "quant": "Q4_K_S",
-          "filename": "Qwen3-1.7B-Q4_K_S.gguf",
-          "sizeMB": 1060
+          "filename": "LFM2.5-350M-Q4_K_M.gguf",
+          "sizeMB": 218.69
         },
         {
           "quant": "Q5_K_M",
-          "filename": "Qwen3-1.7B-Q5_K_M.gguf",
-          "sizeMB": 1258
-        },
-        {
-          "quant": "Q5_K_S",
-          "filename": "Qwen3-1.7B-Q5_K_S.gguf",
-          "sizeMB": 1231
+          "filename": "LFM2.5-350M-Q5_K_M.gguf",
+          "sizeMB": 248.31
         },
         {
           "quant": "Q6_K",
-          "filename": "Qwen3-1.7B-Q6_K.gguf",
-          "sizeMB": 1418
+          "filename": "LFM2.5-350M-Q6_K.gguf",
+          "sizeMB": 279.79
         },
         {
           "quant": "Q8_0",
-          "filename": "Qwen3-1.7B-Q8_0.gguf",
-          "sizeMB": 1834
+          "filename": "LFM2.5-350M-Q8_0.gguf",
+          "sizeMB": 361.65
+        }
+      ]
+    },
+    {
+      "repo": "unsloth/SmolLM3-3B-GGUF",
+      "name": "SmolLM3-3B",
+      "variants": [
+        {
+          "quant": "BF16",
+          "filename": "SmolLM3-3B-BF16.gguf",
+          "sizeMB": 5873.05
         },
         {
-          "quant": "UD-IQ1_M",
-          "filename": "Qwen3-1.7B-UD-IQ1_M.gguf",
-          "sizeMB": 562
+          "quant": "IQ4_NL",
+          "filename": "SmolLM3-3B-IQ4_NL.gguf",
+          "sizeMB": 1726.66
         },
         {
-          "quant": "UD-IQ1_S",
-          "filename": "Qwen3-1.7B-UD-IQ1_S.gguf",
-          "sizeMB": 538
+          "quant": "IQ4_XS",
+          "filename": "SmolLM3-3B-IQ4_XS.gguf",
+          "sizeMB": 1643.98
+        },
+        {
+          "quant": "Q2_K",
+          "filename": "SmolLM3-3B-Q2_K.gguf",
+          "sizeMB": 1195.24
+        },
+        {
+          "quant": "Q2_K_L",
+          "filename": "SmolLM3-3B-Q2_K_L.gguf",
+          "sizeMB": 1195.24
+        },
+        {
+          "quant": "Q3_K_M",
+          "filename": "SmolLM3-3B-Q3_K_M.gguf",
+          "sizeMB": 1498.29
+        },
+        {
+          "quant": "Q3_K_S",
+          "filename": "SmolLM3-3B-Q3_K_S.gguf",
+          "sizeMB": 1365.96
+        },
+        {
+          "quant": "Q4_0",
+          "filename": "SmolLM3-3B-Q4_0.gguf",
+          "sizeMB": 1727.54
+        },
+        {
+          "quant": "Q4_1",
+          "filename": "SmolLM3-3B-Q4_1.gguf",
+          "sizeMB": 1889.79
+        },
+        {
+          "quant": "Q4_K_M",
+          "filename": "SmolLM3-3B-Q4_K_M.gguf",
+          "sizeMB": 1826.58
+        },
+        {
+          "quant": "Q4_K_S",
+          "filename": "SmolLM3-3B-Q4_K_S.gguf",
+          "sizeMB": 1733.41
+        },
+        {
+          "quant": "Q5_K_M",
+          "filename": "SmolLM3-3B-Q5_K_M.gguf",
+          "sizeMB": 2111.2
+        },
+        {
+          "quant": "Q5_K_S",
+          "filename": "SmolLM3-3B-Q5_K_S.gguf",
+          "sizeMB": 2057.41
+        },
+        {
+          "quant": "Q6_K",
+          "filename": "SmolLM3-3B-Q6_K.gguf",
+          "sizeMB": 2413.62
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "SmolLM3-3B-Q8_0.gguf",
+          "sizeMB": 3123.83
         },
         {
           "quant": "UD-IQ2_M",
-          "filename": "Qwen3-1.7B-UD-IQ2_M.gguf",
-          "sizeMB": 709
+          "filename": "SmolLM3-3B-UD-IQ2_M.gguf",
+          "sizeMB": 1097.31
         },
         {
           "quant": "UD-IQ2_XXS",
-          "filename": "Qwen3-1.7B-UD-IQ2_XXS.gguf",
-          "sizeMB": 606
+          "filename": "SmolLM3-3B-UD-IQ2_XXS.gguf",
+          "sizeMB": 910.91
         },
         {
           "quant": "UD-IQ3_XXS",
-          "filename": "Qwen3-1.7B-UD-IQ3_XXS.gguf",
-          "sizeMB": 765
+          "filename": "SmolLM3-3B-UD-IQ3_XXS.gguf",
+          "sizeMB": 1225.68
         },
         {
           "quant": "UD-Q2_K_XL",
-          "filename": "Qwen3-1.7B-UD-Q2_K_XL.gguf",
-          "sizeMB": 798
+          "filename": "SmolLM3-3B-UD-Q2_K_XL.gguf",
+          "sizeMB": 1226.71
         },
         {
           "quant": "UD-Q3_K_XL",
-          "filename": "Qwen3-1.7B-UD-Q3_K_XL.gguf",
-          "sizeMB": 969
+          "filename": "SmolLM3-3B-UD-Q3_K_XL.gguf",
+          "sizeMB": 1536.66
         },
         {
           "quant": "UD-Q4_K_XL",
-          "filename": "Qwen3-1.7B-UD-Q4_K_XL.gguf",
-          "sizeMB": 1133
+          "filename": "SmolLM3-3B-UD-Q4_K_XL.gguf",
+          "sizeMB": 1850.53
         },
         {
           "quant": "UD-Q5_K_XL",
-          "filename": "Qwen3-1.7B-UD-Q5_K_XL.gguf",
-          "sizeMB": 1263
+          "filename": "SmolLM3-3B-UD-Q5_K_XL.gguf",
+          "sizeMB": 2112.11
         },
         {
           "quant": "UD-Q6_K_XL",
-          "filename": "Qwen3-1.7B-UD-Q6_K_XL.gguf",
-          "sizeMB": 1611
+          "filename": "SmolLM3-3B-UD-Q6_K_XL.gguf",
+          "sizeMB": 2630.74
         },
         {
           "quant": "UD-Q8_K_XL",
-          "filename": "Qwen3-1.7B-UD-Q8_K_XL.gguf",
-          "sizeMB": 2333
+          "filename": "SmolLM3-3B-UD-Q8_K_XL.gguf",
+          "sizeMB": 3718.21
         }
       ]
     },
@@ -823,390 +577,456 @@
         {
           "quant": "BF16",
           "filename": "Ministral-3-3B-Instruct-2512-BF16.gguf",
-          "sizeMB": 6866
+          "sizeMB": 6548.14
         },
         {
           "quant": "IQ4_NL",
           "filename": "Ministral-3-3B-Instruct-2512-IQ4_NL.gguf",
-          "sizeMB": 2051
+          "sizeMB": 1956.26
         },
         {
           "quant": "IQ4_XS",
           "filename": "Ministral-3-3B-Instruct-2512-IQ4_XS.gguf",
-          "sizeMB": 1959
+          "sizeMB": 1868.51
         },
         {
           "quant": "Q2_K",
           "filename": "Ministral-3-3B-Instruct-2512-Q2_K.gguf",
-          "sizeMB": 1459
+          "sizeMB": 1391.37
         },
         {
           "quant": "Q2_K_L",
           "filename": "Ministral-3-3B-Instruct-2512-Q2_K_L.gguf",
-          "sizeMB": 1459
+          "sizeMB": 1391.37
         },
         {
           "quant": "Q3_K_M",
           "filename": "Ministral-3-3B-Instruct-2512-Q3_K_M.gguf",
-          "sizeMB": 1796
+          "sizeMB": 1712.37
         },
         {
           "quant": "Q3_K_S",
           "filename": "Ministral-3-3B-Instruct-2512-Q3_K_S.gguf",
-          "sizeMB": 1639
+          "sizeMB": 1563.22
         },
         {
           "quant": "Q4_0",
           "filename": "Ministral-3-3B-Instruct-2512-Q4_0.gguf",
-          "sizeMB": 2046
+          "sizeMB": 1951.58
         },
         {
           "quant": "Q4_1",
           "filename": "Ministral-3-3B-Instruct-2512-Q4_1.gguf",
-          "sizeMB": 2230
+          "sizeMB": 2126.89
         },
         {
           "quant": "Q4_K_M",
           "filename": "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",
-          "sizeMB": 2146
+          "sizeMB": 2047.06
         },
         {
           "quant": "Q4_K_S",
           "filename": "Ministral-3-3B-Instruct-2512-Q4_K_S.gguf",
-          "sizeMB": 2053
+          "sizeMB": 1958.14
         },
         {
           "quant": "Q5_K_M",
           "filename": "Ministral-3-3B-Instruct-2512-Q5_K_M.gguf",
-          "sizeMB": 2474
+          "sizeMB": 2359.06
         },
         {
           "quant": "Q5_K_S",
           "filename": "Ministral-3-3B-Instruct-2512-Q5_K_S.gguf",
-          "sizeMB": 2419
+          "sizeMB": 2307.26
         },
         {
           "quant": "Q6_K",
           "filename": "Ministral-3-3B-Instruct-2512-Q6_K.gguf",
-          "sizeMB": 2821
+          "sizeMB": 2690.56
         },
         {
           "quant": "Q8_0",
           "filename": "Ministral-3-3B-Instruct-2512-Q8_0.gguf",
-          "sizeMB": 3652
+          "sizeMB": 3482.51
         },
         {
           "quant": "UD-IQ1_M",
           "filename": "Ministral-3-3B-Instruct-2512-UD-IQ1_M.gguf",
-          "sizeMB": 1019
+          "sizeMB": 971.98
         },
         {
           "quant": "UD-IQ1_S",
           "filename": "Ministral-3-3B-Instruct-2512-UD-IQ1_S.gguf",
-          "sizeMB": 969
+          "sizeMB": 924.26
         },
         {
           "quant": "UD-IQ2_M",
           "filename": "Ministral-3-3B-Instruct-2512-UD-IQ2_M.gguf",
-          "sizeMB": 1340
+          "sizeMB": 1277.82
         },
         {
           "quant": "UD-IQ2_XXS",
           "filename": "Ministral-3-3B-Instruct-2512-UD-IQ2_XXS.gguf",
-          "sizeMB": 1109
+          "sizeMB": 1057.58
         },
         {
           "quant": "UD-IQ3_XXS",
           "filename": "Ministral-3-3B-Instruct-2512-UD-IQ3_XXS.gguf",
-          "sizeMB": 1458
+          "sizeMB": 1390.27
         },
         {
           "quant": "UD-Q2_K_XL",
           "filename": "Ministral-3-3B-Instruct-2512-UD-Q2_K_XL.gguf",
-          "sizeMB": 1492
+          "sizeMB": 1423.2
         },
         {
           "quant": "UD-Q3_K_XL",
           "filename": "Ministral-3-3B-Instruct-2512-UD-Q3_K_XL.gguf",
-          "sizeMB": 1856
+          "sizeMB": 1770.1
         },
         {
           "quant": "UD-Q4_K_XL",
           "filename": "Ministral-3-3B-Instruct-2512-UD-Q4_K_XL.gguf",
-          "sizeMB": 2192
+          "sizeMB": 2090.42
         },
         {
           "quant": "UD-Q5_K_XL",
           "filename": "Ministral-3-3B-Instruct-2512-UD-Q5_K_XL.gguf",
-          "sizeMB": 2479
+          "sizeMB": 2364.31
         },
         {
           "quant": "UD-Q6_K_XL",
           "filename": "Ministral-3-3B-Instruct-2512-UD-Q6_K_XL.gguf",
-          "sizeMB": 3175
+          "sizeMB": 3027.68
         },
         {
           "quant": "UD-Q8_K_XL",
           "filename": "Ministral-3-3B-Instruct-2512-UD-Q8_K_XL.gguf",
-          "sizeMB": 4501
+          "sizeMB": 4292.51
         }
       ]
     },
     {
-      "repo": "unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF",
-      "name": "DeepSeek-R1-Distill-Qwen-1.5B",
+      "repo": "unsloth/Qwen3.5-2B-GGUF",
+      "name": "Qwen3.5-2B",
       "variants": [
         {
           "quant": "BF16",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-BF16.gguf",
-          "sizeMB": 3560
-        },
-        {
-          "quant": "Q2_K",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-Q2_K.gguf",
-          "sizeMB": 753
-        },
-        {
-          "quant": "Q2_K_L",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-Q2_K_L.gguf",
-          "sizeMB": 808
-        },
-        {
-          "quant": "Q3_K_M",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf",
-          "sizeMB": 924
-        },
-        {
-          "quant": "Q4_K_M",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
-          "sizeMB": 1117
-        },
-        {
-          "quant": "Q5_K_M",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-Q5_K_M.gguf",
-          "sizeMB": 1285
-        },
-        {
-          "quant": "Q6_K",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
-          "sizeMB": 1464
-        },
-        {
-          "quant": "Q8_0",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf",
-          "sizeMB": 1895
-        },
-        {
-          "quant": "UD-IQ1_M",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-UD-IQ1_M.gguf",
-          "sizeMB": 716
-        },
-        {
-          "quant": "UD-IQ1_S",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-UD-IQ1_S.gguf",
-          "sizeMB": 700
-        },
-        {
-          "quant": "UD-IQ2_M",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-UD-IQ2_M.gguf",
-          "sizeMB": 792
-        },
-        {
-          "quant": "UD-IQ2_XXS",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-UD-IQ2_XXS.gguf",
-          "sizeMB": 775
-        },
-        {
-          "quant": "UD-IQ3_XXS",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-UD-IQ3_XXS.gguf",
-          "sizeMB": 882
-        },
-        {
-          "quant": "UD-IQ4_XS",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-UD-IQ4_XS.gguf",
-          "sizeMB": 1099
-        },
-        {
-          "quant": "UD-Q2_K_XL",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-UD-Q2_K_XL.gguf",
-          "sizeMB": 886
-        },
-        {
-          "quant": "UD-Q3_K_XL",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-UD-Q3_K_XL.gguf",
-          "sizeMB": 968
-        },
-        {
-          "quant": "UD-Q4_K_XL",
-          "filename": "DeepSeek-R1-Distill-Qwen-1.5B-UD-Q4_K_XL.gguf",
-          "sizeMB": 1189
-        }
-      ]
-    },
-    {
-      "repo": "LiquidAI/LFM2.5-1.2B-Instruct-GGUF",
-      "name": "LFM2.5-1.2B-Instruct",
-      "variants": [
-        {
-          "quant": "BF16",
-          "filename": "LFM2.5-1.2B-Instruct-BF16.gguf",
-          "sizeMB": 2343
-        },
-        {
-          "quant": "F16",
-          "filename": "LFM2.5-1.2B-Instruct-F16.gguf",
-          "sizeMB": 2343
-        },
-        {
-          "quant": "Q4_0",
-          "filename": "LFM2.5-1.2B-Instruct-Q4_0.gguf",
-          "sizeMB": 696
-        },
-        {
-          "quant": "Q4_K_M",
-          "filename": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
-          "sizeMB": 731
-        },
-        {
-          "quant": "Q5_K_M",
-          "filename": "LFM2.5-1.2B-Instruct-Q5_K_M.gguf",
-          "sizeMB": 843
-        },
-        {
-          "quant": "Q6_K",
-          "filename": "LFM2.5-1.2B-Instruct-Q6_K.gguf",
-          "sizeMB": 963
-        },
-        {
-          "quant": "Q8_0",
-          "filename": "LFM2.5-1.2B-Instruct-Q8_0.gguf",
-          "sizeMB": 1246
-        }
-      ]
-    },
-    {
-      "repo": "unsloth/SmolLM3-3B-128K-GGUF",
-      "name": "SmolLM3-3B-128K",
-      "variants": [
-        {
-          "quant": "BF16",
-          "filename": "SmolLM3-3B-128K-BF16.gguf",
-          "sizeMB": 6158
+          "filename": "Qwen3.5-2B-BF16.gguf",
+          "sizeMB": 3600.8
         },
         {
           "quant": "IQ4_NL",
-          "filename": "SmolLM3-3B-128K-IQ4_NL.gguf",
-          "sizeMB": 1811
+          "filename": "Qwen3.5-2B-IQ4_NL.gguf",
+          "sizeMB": 1157.09
         },
         {
           "quant": "IQ4_XS",
-          "filename": "SmolLM3-3B-128K-IQ4_XS.gguf",
-          "sizeMB": 1724
-        },
-        {
-          "quant": "Q2_K",
-          "filename": "SmolLM3-3B-128K-Q2_K.gguf",
-          "sizeMB": 1253
-        },
-        {
-          "quant": "Q2_K_L",
-          "filename": "SmolLM3-3B-128K-Q2_K_L.gguf",
-          "sizeMB": 1253
+          "filename": "Qwen3.5-2B-IQ4_XS.gguf",
+          "sizeMB": 1118.66
         },
         {
           "quant": "Q3_K_M",
-          "filename": "SmolLM3-3B-128K-Q3_K_M.gguf",
-          "sizeMB": 1571
+          "filename": "Qwen3.5-2B-Q3_K_M.gguf",
+          "sizeMB": 1055.86
         },
         {
           "quant": "Q3_K_S",
-          "filename": "SmolLM3-3B-128K-Q3_K_S.gguf",
-          "sizeMB": 1432
+          "filename": "Qwen3.5-2B-Q3_K_S.gguf",
+          "sizeMB": 983.19
         },
         {
           "quant": "Q4_0",
-          "filename": "SmolLM3-3B-128K-Q4_0.gguf",
-          "sizeMB": 1811
+          "filename": "Qwen3.5-2B-Q4_0.gguf",
+          "sizeMB": 1158.59
         },
         {
           "quant": "Q4_1",
-          "filename": "SmolLM3-3B-128K-Q4_1.gguf",
-          "sizeMB": 1982
+          "filename": "Qwen3.5-2B-Q4_1.gguf",
+          "sizeMB": 1233.59
         },
         {
           "quant": "Q4_K_M",
-          "filename": "SmolLM3-3B-128K-Q4_K_M.gguf",
-          "sizeMB": 1915
+          "filename": "Qwen3.5-2B-Q4_K_M.gguf",
+          "sizeMB": 1221.5
         },
         {
           "quant": "Q4_K_S",
-          "filename": "SmolLM3-3B-128K-Q4_K_S.gguf",
-          "sizeMB": 1818
+          "filename": "Qwen3.5-2B-Q4_K_S.gguf",
+          "sizeMB": 1161.34
         },
         {
           "quant": "Q5_K_M",
-          "filename": "SmolLM3-3B-128K-Q5_K_M.gguf",
-          "sizeMB": 2214
+          "filename": "Qwen3.5-2B-Q5_K_M.gguf",
+          "sizeMB": 1368.75
         },
         {
           "quant": "Q5_K_S",
-          "filename": "SmolLM3-3B-128K-Q5_K_S.gguf",
-          "sizeMB": 2157
+          "filename": "Qwen3.5-2B-Q5_K_S.gguf",
+          "sizeMB": 1320.41
         },
         {
           "quant": "Q6_K",
-          "filename": "SmolLM3-3B-128K-Q6_K.gguf",
-          "sizeMB": 2531
+          "filename": "Qwen3.5-2B-Q6_K.gguf",
+          "sizeMB": 1502
         },
         {
           "quant": "Q8_0",
-          "filename": "SmolLM3-3B-128K-Q8_0.gguf",
-          "sizeMB": 3276
+          "filename": "Qwen3.5-2B-Q8_0.gguf",
+          "sizeMB": 1918.8
         },
         {
           "quant": "UD-IQ2_M",
-          "filename": "SmolLM3-3B-128K-UD-IQ2_M.gguf",
-          "sizeMB": 1151
+          "filename": "Qwen3.5-2B-UD-IQ2_M.gguf",
+          "sizeMB": 820.02
         },
         {
           "quant": "UD-IQ2_XXS",
-          "filename": "SmolLM3-3B-128K-UD-IQ2_XXS.gguf",
-          "sizeMB": 955
+          "filename": "Qwen3.5-2B-UD-IQ2_XXS.gguf",
+          "sizeMB": 732.68
         },
         {
           "quant": "UD-IQ3_XXS",
-          "filename": "SmolLM3-3B-128K-UD-IQ3_XXS.gguf",
-          "sizeMB": 1285
+          "filename": "Qwen3.5-2B-UD-IQ3_XXS.gguf",
+          "sizeMB": 888.66
         },
         {
           "quant": "UD-Q2_K_XL",
-          "filename": "SmolLM3-3B-128K-UD-Q2_K_XL.gguf",
-          "sizeMB": 1286
+          "filename": "Qwen3.5-2B-UD-Q2_K_XL.gguf",
+          "sizeMB": 921.76
         },
         {
           "quant": "UD-Q3_K_XL",
-          "filename": "SmolLM3-3B-128K-UD-Q3_K_XL.gguf",
-          "sizeMB": 1611
+          "filename": "Qwen3.5-2B-UD-Q3_K_XL.gguf",
+          "sizeMB": 1105.57
         },
         {
           "quant": "UD-Q4_K_XL",
-          "filename": "SmolLM3-3B-128K-UD-Q4_K_XL.gguf",
-          "sizeMB": 1940
+          "filename": "Qwen3.5-2B-UD-Q4_K_XL.gguf",
+          "sizeMB": 1277.69
         },
         {
           "quant": "UD-Q5_K_XL",
-          "filename": "SmolLM3-3B-128K-UD-Q5_K_XL.gguf",
-          "sizeMB": 2215
+          "filename": "Qwen3.5-2B-UD-Q5_K_XL.gguf",
+          "sizeMB": 1398.74
         },
         {
           "quant": "UD-Q6_K_XL",
-          "filename": "SmolLM3-3B-128K-UD-Q6_K_XL.gguf",
-          "sizeMB": 2759
+          "filename": "Qwen3.5-2B-UD-Q6_K_XL.gguf",
+          "sizeMB": 1778.11
         },
         {
           "quant": "UD-Q8_K_XL",
-          "filename": "SmolLM3-3B-128K-UD-Q8_K_XL.gguf",
-          "sizeMB": 3899
+          "filename": "Qwen3.5-2B-UD-Q8_K_XL.gguf",
+          "sizeMB": 2703.61
+        }
+      ]
+    },
+    {
+      "repo": "unsloth/gemma-4-E2B-it-GGUF",
+      "name": "gemma-4-E2B-it",
+      "variants": [
+        {
+          "quant": "BF16",
+          "filename": "gemma-4-E2B-it-BF16.gguf",
+          "sizeMB": 8879.95
+        },
+        {
+          "quant": "IQ4_NL",
+          "filename": "gemma-4-E2B-it-IQ4_NL.gguf",
+          "sizeMB": 2900.2
+        },
+        {
+          "quant": "IQ4_XS",
+          "filename": "gemma-4-E2B-it-IQ4_XS.gguf",
+          "sizeMB": 2845.71
+        },
+        {
+          "quant": "Q3_K_M",
+          "filename": "gemma-4-E2B-it-Q3_K_M.gguf",
+          "sizeMB": 2419.27
+        },
+        {
+          "quant": "Q3_K_S",
+          "filename": "gemma-4-E2B-it-Q3_K_S.gguf",
+          "sizeMB": 2332.35
+        },
+        {
+          "quant": "Q4_0",
+          "filename": "gemma-4-E2B-it-Q4_0.gguf",
+          "sizeMB": 2900.48
+        },
+        {
+          "quant": "Q4_1",
+          "filename": "gemma-4-E2B-it-Q4_1.gguf",
+          "sizeMB": 3008.76
+        },
+        {
+          "quant": "Q4_K_M",
+          "filename": "gemma-4-E2B-it-Q4_K_M.gguf",
+          "sizeMB": 2962.81
+        },
+        {
+          "quant": "Q4_K_S",
+          "filename": "gemma-4-E2B-it-Q4_K_S.gguf",
+          "sizeMB": 2902.92
+        },
+        {
+          "quant": "Q5_K_M",
+          "filename": "gemma-4-E2B-it-Q5_K_M.gguf",
+          "sizeMB": 3200.56
+        },
+        {
+          "quant": "Q5_K_S",
+          "filename": "gemma-4-E2B-it-Q5_K_S.gguf",
+          "sizeMB": 3167.29
+        },
+        {
+          "quant": "Q6_K",
+          "filename": "gemma-4-E2B-it-Q6_K.gguf",
+          "sizeMB": 4293.17
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "gemma-4-E2B-it-Q8_0.gguf",
+          "sizeMB": 4814.48
+        },
+        {
+          "quant": "UD-IQ2_M",
+          "filename": "gemma-4-E2B-it-UD-IQ2_M.gguf",
+          "sizeMB": 2181.16
+        },
+        {
+          "quant": "UD-IQ3_XXS",
+          "filename": "gemma-4-E2B-it-UD-IQ3_XXS.gguf",
+          "sizeMB": 2259.49
+        },
+        {
+          "quant": "UD-Q2_K_XL",
+          "filename": "gemma-4-E2B-it-UD-Q2_K_XL.gguf",
+          "sizeMB": 2288.73
+        },
+        {
+          "quant": "UD-Q3_K_XL",
+          "filename": "gemma-4-E2B-it-UD-Q3_K_XL.gguf",
+          "sizeMB": 2780.03
+        },
+        {
+          "quant": "UD-Q4_K_XL",
+          "filename": "gemma-4-E2B-it-UD-Q4_K_XL.gguf",
+          "sizeMB": 3027
+        },
+        {
+          "quant": "UD-Q5_K_XL",
+          "filename": "gemma-4-E2B-it-UD-Q5_K_XL.gguf",
+          "sizeMB": 4093.17
+        },
+        {
+          "quant": "UD-Q6_K_XL",
+          "filename": "gemma-4-E2B-it-UD-Q6_K_XL.gguf",
+          "sizeMB": 4491.89
+        },
+        {
+          "quant": "UD-Q8_K_XL",
+          "filename": "gemma-4-E2B-it-UD-Q8_K_XL.gguf",
+          "sizeMB": 5025.42
+        }
+      ]
+    },
+    {
+      "repo": "ibm-granite/granite-4.0-h-1b-GGUF",
+      "name": "granite-4.0-h-1b",
+      "variants": [
+        {
+          "quant": "Q2_K",
+          "filename": "granite-4.0-h-1b-Q2_K.gguf",
+          "sizeMB": 561.65
+        },
+        {
+          "quant": "Q3_K_L",
+          "filename": "granite-4.0-h-1b-Q3_K_L.gguf",
+          "sizeMB": 727.57
+        },
+        {
+          "quant": "Q3_K_M",
+          "filename": "granite-4.0-h-1b-Q3_K_M.gguf",
+          "sizeMB": 697.76
+        },
+        {
+          "quant": "Q3_K_S",
+          "filename": "granite-4.0-h-1b-Q3_K_S.gguf",
+          "sizeMB": 662.6
+        },
+        {
+          "quant": "Q4_0",
+          "filename": "granite-4.0-h-1b-Q4_0.gguf",
+          "sizeMB": 828.09
+        },
+        {
+          "quant": "Q4_1",
+          "filename": "granite-4.0-h-1b-Q4_1.gguf",
+          "sizeMB": 905.97
+        },
+        {
+          "quant": "Q4_K_M",
+          "filename": "granite-4.0-h-1b-Q4_K_M.gguf",
+          "sizeMB": 859.42
+        },
+        {
+          "quant": "Q4_K_S",
+          "filename": "granite-4.0-h-1b-Q4_K_S.gguf",
+          "sizeMB": 832.22
+        },
+        {
+          "quant": "Q5_0",
+          "filename": "granite-4.0-h-1b-Q5_0.gguf",
+          "sizeMB": 983.84
+        },
+        {
+          "quant": "Q5_1",
+          "filename": "granite-4.0-h-1b-Q5_1.gguf",
+          "sizeMB": 1061.72
+        },
+        {
+          "quant": "Q5_K_M",
+          "filename": "granite-4.0-h-1b-Q5_K_M.gguf",
+          "sizeMB": 999.98
+        },
+        {
+          "quant": "Q5_K_S",
+          "filename": "granite-4.0-h-1b-Q5_K_S.gguf",
+          "sizeMB": 983.84
+        },
+        {
+          "quant": "Q6_K",
+          "filename": "granite-4.0-h-1b-Q6_K.gguf",
+          "sizeMB": 1149.33
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "granite-4.0-h-1b-Q8_0.gguf",
+          "sizeMB": 1486.71
+        },
+        {
+          "quant": "bf16",
+          "filename": "granite-4.0-h-1b-bf16.gguf",
+          "sizeMB": 2792.68
+        }
+      ]
+    },
+    {
+      "repo": "prism-ml/Bonsai-1.7B-gguf",
+      "name": "Bonsai-1.7B",
+      "variants": [
+        {
+          "quant": "base",
+          "filename": "Bonsai-1.7B.gguf",
+          "sizeMB": 236.8
+        },
+        {
+          "quant": "Q1_0",
+          "filename": "Bonsai-1.7B-Q1_0.gguf",
+          "sizeMB": 236.8
         }
       ]
     }
@@ -1215,5 +1035,6 @@
     "Q2_K",
     "Q4_K_M",
     "Q8_0"
-  ]
+  ],
+  "defaultQuant": "Q4_K_M"
 }

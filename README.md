@@ -1,8 +1,37 @@
 # webgpu-bench
 
-Automated benchmarking framework for llama.cpp's WebGPU backend. Compiles llama.cpp to WebAssembly, runs GGUF models in real browsers via WebGPU, and measures inference performance and numerical correctness across Chrome, Firefox, and Safari.
+Benchmarking framework for llama.cpp's WebGPU backend. Compiles llama.cpp to WebAssembly, runs GGUF models in real browsers via WebGPU, and measures inference performance and numerical correctness across Chrome and Safari.
 
-Currently tracks **10 models** with **230 quantization variants** from HuggingFace.
+Currently tracks **10 models** with **194 quantization variants** from HuggingFace.
+
+Two ways to run:
+- **One-click page** (`bench.html`) — open in any WebGPU-capable browser, tick the variants you want, click Download → Run. Great for measuring your own laptop or for a hosted leaderboard URL. See [One-click benchmark](#one-click-benchmark).
+- **Automated CLI** (`runner.js`) — Playwright + WebDriverIO orchestrator that runs cross-browser matrices headlessly. Used for CI and cloud runs. See [Running Benchmarks](#running-benchmarks).
+
+## One-click benchmark
+
+The simplest path: start the dev server, open `bench.html` in whichever browser you want to test, and use the two buttons.
+
+```bash
+# Prerequisites: built WASM (`npm run build`) and `npm install`.
+node server.js
+# Then open http://localhost:3000/bench.html in Chrome, Safari, or Firefox (with WebGPU flags).
+```
+
+Page flow:
+1. The device line shows detected memory + WebGPU adapter + an estimated safe model budget.
+2. **Models panel** lists all 194 variants grouped by family. Every variant is checked by default; variants that exceed the budget are dimmed and unchecked. `Granite 4.0 h-1b` shows a "needs SSM_SCAN" badge; `Bonsai-1.7B-Q1_0` shows a "needs Q1_0" badge. Uncheck whatever you don't want to run.
+3. **`[Download selected]`** streams GGUFs through the local proxy (`cache/models/`). Per-row byte progress.
+4. **`[Run benchmarks]`** runs each cached variant through `runBenchmarkCore()` sequentially. A crash in one variant doesn't halt the queue.
+5. **Output** — copy the markdown block or download JSON. When served from `localhost:3000`, a checkbox appends each record to `results/results.json` as runner.js does.
+
+### Hosted (HF Spaces)
+
+`bench.html` auto-detects it's hosted (no `/api/models`) and switches to:
+- GGUFs fetched directly from HF (CORS-enabled), cached in browser OPFS, no server needed.
+- HF OAuth sign-in + submit-to-dataset button (requires `bench-config.js` to be filled in with `HF_OAUTH_CLIENT_ID` + `HF_DATASET_REPO`).
+
+The `sync-to-hf-space` workflow copies the static bundle to your Space on every push to `main` (set the `HF_SPACE_REPO` repo variable + `HF_TOKEN` secret first).
 
 ## Prerequisites
 
@@ -12,10 +41,10 @@ Currently tracks **10 models** with **230 quantization variants** from HuggingFa
 | [Ninja](https://ninja-build.org/) | Any | `brew install ninja` / `apt install ninja-build` |
 | [Node.js](https://nodejs.org/) | 18+ | |
 | [CMake](https://cmake.org/) | 3.14+ | |
-| [Playwright browsers](https://playwright.dev/) | Installed via npx | For Chrome and Firefox |
+| [Playwright browsers](https://playwright.dev/) | Installed via npx | For Chrome |
 | Safari Remote Automation | macOS only | Safari > Settings > Advanced > "Allow Remote Automation" |
 
-## Quick Start
+## Quick Start (CLI / automated)
 
 ```bash
 # Clone with submodules (llama.cpp)
@@ -27,7 +56,7 @@ npm run build
 
 # Install dependencies + Playwright browsers
 npm install
-npx playwright install chromium firefox
+npx playwright install chromium
 
 # Run a quick benchmark (3 quants, Chromium only)
 node runner.js --quick --browsers=chromium
@@ -36,6 +65,8 @@ node runner.js --quick --browsers=chromium
 node report.js
 ```
 
+For the interactive one-click page instead, see [One-click benchmark](#one-click-benchmark).
+
 ## Build
 
 Compiles llama.cpp (git submodule) to two WASM variants with WebGPU support:
@@ -43,7 +74,7 @@ Compiles llama.cpp (git submodule) to two WASM variants with WebGPU support:
 | Variant | Browser | Mechanism |
 |---------|---------|-----------|
 | **JSPI** | Chrome | JavaScript Promise Integration (native async) |
-| **Asyncify** | Firefox, Safari | Emscripten Asyncify (transform-based async) |
+| **Asyncify** | Safari | Emscripten Asyncify (transform-based async) |
 
 ```bash
 npm run build
@@ -68,9 +99,9 @@ node runner.js [options]
 
 | Flag | Description | Example |
 |------|-------------|---------|
-| _(none)_ | All 230 variants on all 3 browsers | `node runner.js` |
+| _(none)_ | All 230 variants on default browsers (chromium, plus webkit on macOS) | `node runner.js` |
 | `--quick` | Only Q2_K, Q4_K_M, Q8_0 | `node runner.js --quick` |
-| `--browsers=` | Comma-separated browser list | `--browsers=chromium,firefox` |
+| `--browsers=` | Comma-separated browser list | `--browsers=chromium,webkit` |
 | `--variants=` | Specific quantization types | `--variants=Q4_K_M,Q8_0` |
 | `--models=` | Filter by model name (substring match) | `--models=Llama-3.2-1B` |
 | `--no-webgpu` | CPU-only mode (disable GPU offload) | `--no-webgpu` |
@@ -108,7 +139,7 @@ node runner.js --quick --no-webgpu
 | `npm run bench:quick` | Quick benchmark (3 quants) |
 | `npm run bench:chromium` | All quants, Chromium only |
 | `npm run report` | Generate CSV from results |
-| `npm run submit` | Prepare results for PR submission |
+| `npm run submit` | Push results to the HF leaderboard dataset (needs `HF_TOKEN` + `HF_DATASET_REPO`); use `-- --legacy-file-only` for the old PR flow |
 | `npm run build:site` | Build dashboard data |
 
 ### Model Download Caching
@@ -204,14 +235,25 @@ npx serve site
 
 ### Submitting Results from Your Machine
 
+The default path pushes to a shared Hugging Face dataset. The dashboard CI pulls from the dataset on a schedule, so your results surface publicly without any manual PR.
+
 ```bash
 # 1. Run benchmarks
-node runner.js --browsers=chromium,firefox
+node runner.js --browsers=chromium
+# …or use the one-click page: http://localhost:3000/bench.html
 
-# 2. Prepare results for submission
+# 2. Push to the leaderboard dataset
+export HF_TOKEN=hf_your_write_token             # create at https://huggingface.co/settings/tokens
+export HF_DATASET_REPO=owner/webgpu-bench-leaderboard
 npm run submit
+```
 
-# 3. Commit and open a PR
+Each machine/browser pair becomes one commit at `runs/{YYYY-MM-DD}/{slug}-{browser}-{epoch}.json`.
+
+#### Legacy PR flow (for transition / debug)
+
+```bash
+npm run submit -- --legacy-file-only
 git checkout -b results/my-machine
 git add data/machines/
 git commit -m "Add benchmark results for <your machine>"
@@ -219,13 +261,14 @@ git push -u origin results/my-machine
 gh pr create
 ```
 
-On merge, GitHub Actions rebuilds the dashboard with the new data.
-
 ### Data Pipeline
 
-1. `npm run submit` reads `results/results.json`, strips heavy fields (`token_ids`, `output`), and writes to `data/machines/{slug}.json` (e.g., `apple-m4-pro-48gb-darwin`).
-2. `npm run build:site` merges all machine files into `site/data/combined.json`.
-3. The dashboard at `site/` fetches `combined.json` and renders everything client-side.
+1. Benchmarks (CLI or `bench.html` one-click) write to `results/results.json`.
+2. `npm run submit` pushes stripped records to the HF dataset via `scripts/push-to-dataset.mjs`.
+3. Dashboard CI (`deploy-dashboard.yml`) runs `scripts/sync-from-dataset.mjs` to regroup `runs/**/*.json` into `data/machines/{slug}.json`, then `scripts/build-site.js` merges into `data/combined.json`.
+4. The static site at `site/` renders `combined.json` client-side.
+
+First-time bootstrap: `HF_TOKEN=… HF_DATASET_REPO=… node scripts/bootstrap-dataset.mjs` seeds the dataset from any existing `data/machines/*.json`.
 
 ## Adding Models
 
@@ -283,15 +326,17 @@ for f in json.load(sys.stdin):
 | Model | Repo | Variants |
 |-------|------|----------|
 | Llama-3.2-1B-Instruct | unsloth | 27 |
-| Llama-3.2-3B-Instruct | unsloth | 27 |
 | gemma-3-270m-it | unsloth | 24 |
-| gemma-3-1b-it | unsloth | 26 |
 | Qwen3-0.6B | unsloth | 26 |
-| Qwen3-1.7B | unsloth | 26 |
+| LFM2.5-350M | LiquidAI | 7 |
+| SmolLM3-3B | unsloth | 24 |
 | Ministral-3-3B-Instruct-2512 | unsloth | 26 |
-| DeepSeek-R1-Distill-Qwen-1.5B | unsloth | 17 |
-| LFM2.5-1.2B-Instruct | LiquidAI | 7 |
-| SmolLM3-3B-128K | unsloth | 24 |
+| Qwen3.5-2B | unsloth | 22 |
+| gemma-4-E2B-it | unsloth | 21 |
+| granite-4.0-h-1b | ibm-granite | 15 (needs `SSM_SCAN` in llama.cpp) |
+| Bonsai-1.7B | prism-ml | 2 (Q1_0 variant needs `Q1_0` quant support) |
+
+Run `node scripts/fill-sizes.mjs` after editing the list to HEAD each file on HF and populate `sizeMB`.
 
 ## Architecture
 
@@ -322,7 +367,7 @@ webgpu-bench/
 
 1. `build.sh` compiles llama.cpp to WASM with WebGPU support (Emscripten + emdawnwebgpu)
 2. `runner.js` starts a local Express server with a HuggingFace caching proxy
-3. Playwright launches Chrome/Firefox; WebDriverIO launches real Safari (for actual WebGPU support)
+3. Playwright launches Chrome; WebDriverIO launches real Safari (for actual WebGPU support)
 4. Each browser navigates to `harness.html`, which detects JSPI support and loads the correct WASM variant
 5. The model is downloaded from HuggingFace (or served from cache) inside the browser
 6. Inference runs via WebGPU (or CPU fallback) using llama.cpp's C API
@@ -346,7 +391,6 @@ All functions use greedy sampling for deterministic output.
 | Browser | Automation | WASM Variant | WebGPU |
 |---------|-----------|--------------|--------|
 | Chrome | Playwright | JSPI | Yes (via Dawn) |
-| Firefox | Playwright | Asyncify | Yes (nightly) / No (stable) |
 | Safari | WebDriverIO | Asyncify | Yes (macOS native) |
 
 Safari uses WebDriverIO instead of Playwright to access real Safari with native WebGPU support. Playwright's WebKit engine doesn't support WebGPU.

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WebGPU Benchmark — One Click</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="bench.css">
+  <!-- Import map so `@huggingface/hub` resolves in the browser via esm.sh.
+       Must appear before any <script type="module">. -->
+  <script type="importmap">
+    {
+      "imports": {
+        "@huggingface/hub": "https://esm.sh/@huggingface/hub"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header>
+    <div class="title-row">
+      <h1>WebGPU Benchmark <span class="muted">— One Click</span></h1>
+      <span class="mode-badge" id="mode-badge" title="Detection source">…</span>
+    </div>
+    <div id="device-line" class="muted">Detecting device…</div>
+    <div id="budget-line" class="muted"></div>
+  </header>
+
+  <section class="filters" aria-label="Variant visibility filters">
+    <span class="filter-label">Hide:</span>
+    <label><input type="checkbox" id="hide-ud"> UD</label>
+    <label><input type="checkbox" id="hide-iq"> IQ</label>
+    <label><input type="checkbox" id="hide-hifp"> BF16/F16</label>
+    <span class="filter-hint">(visual only, does not uncheck)</span>
+  </section>
+
+  <section id="models-panel" aria-label="Models">
+    <p id="models-loading" class="muted">Loading models…</p>
+  </section>
+
+  <section id="hub-section" class="output-actions" hidden aria-label="Hugging Face dataset">
+    <button id="btn-signin" class="secondary">Sign in with Hugging Face</button>
+    <button id="btn-submit" disabled>Submit to leaderboard dataset</button>
+    <span id="hf-user" class="muted"></span>
+  </section>
+
+  <section class="controls">
+    <label class="iterations-control">
+      Iterations per variant:
+      <input type="number" id="iterations-input" value="5" min="1" max="50" step="1">
+      <span class="filter-hint">min 5 to submit</span>
+    </label>
+    <button id="btn-download" disabled>Download selected</button>
+    <button id="btn-run" disabled>Run benchmarks</button>
+    <button id="btn-abort" class="danger" disabled>Abort</button>
+    <button id="btn-purge" class="secondary" hidden>Purge OPFS cache</button>
+    <span id="queue-status" class="muted"></span>
+  </section>
+
+  <section id="progress-panel" hidden aria-label="Run progress">
+    <h2>Progress</h2>
+    <table id="progress-table">
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Variant</th>
+          <th>Status</th>
+          <th class="num">Prefill tok/s</th>
+          <th class="num">Decode tok/s</th>
+          <th class="num">Wall s</th>
+          <th>Error</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section id="output-panel" hidden aria-label="Output">
+    <h2>Output</h2>
+    <div id="output-actions-local" class="output-actions">
+      <label>
+        <input type="checkbox" id="save-local" checked>
+        Save to <code>results/results.json</code> on this server
+      </label>
+    </div>
+    <textarea id="output-textarea" readonly spellcheck="false"></textarea>
+    <div class="output-buttons">
+      <button id="btn-copy" class="secondary">Copy</button>
+      <button id="btn-download-json" class="secondary">Download JSON</button>
+    </div>
+  </section>
+
+  <details id="log-panel">
+    <summary>Run log</summary>
+    <pre id="log-output"></pre>
+  </details>
+
+  <script type="module" src="bench-app.js"></script>
+</body>
+</html>

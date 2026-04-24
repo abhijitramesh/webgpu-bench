@@ -1,0 +1,90 @@
+name: Sync to HF Space
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bench.html'
+      - 'bench-*.js'
+      - 'bench.css'
+      - 'harness.html'
+      - 'harness.js'
+      - 'bench-core.js'
+      - 'bench-source.js'
+      - 'bench-device.js'
+      - 'bench-hub.js'
+      - 'bench-config.js'
+      - 'models.json'
+      - 'build/jspi/**'
+      - 'build/asyncify/**'
+      - 'spaces/**'
+      - '.github/workflows/sync-to-hf-space.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: sync-to-hf-space
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check configuration
+        env:
+          HF_SPACE_REPO: ${{ vars.HF_SPACE_REPO }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_SPACE_REPO" ] || [ -z "$HF_TOKEN" ]; then
+            echo "::warning::HF_SPACE_REPO (repo variable) or HF_TOKEN (secret) missing — skipping sync."
+            echo "SKIP=1" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/checkout@v4
+        if: env.SKIP != '1'
+        with:
+          lfs: true
+
+      - name: Stage deploy assets
+        if: env.SKIP != '1'
+        run: |
+          mkdir -p _deploy
+          cp bench.html _deploy/index.html
+          cp bench.html bench.css bench-app.js bench-core.js bench-source.js \
+             bench-device.js bench-hub.js bench-config.js _deploy/
+          cp harness.html harness.js _deploy/
+          cp models.json _deploy/
+          cp spaces/README.md _deploy/README.md
+          mkdir -p _deploy/build
+          cp -R build/jspi _deploy/build/jspi
+          cp -R build/asyncify _deploy/build/asyncify
+          # .nojekyll so GH-style rules don't mangle underscored dirs if any.
+          touch _deploy/.nojekyll
+          du -sh _deploy | awk '{print "Deploy bundle: "$1}'
+
+      - name: Push to HF Space
+        if: env.SKIP != '1'
+        env:
+          HF_SPACE_REPO: ${{ vars.HF_SPACE_REPO }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -e
+          git config --global user.email "actions@github.com"
+          git config --global user.name  "GitHub Actions"
+
+          # Clone the Space repo (supports LFS in case WASM files are large).
+          git clone "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE_REPO}" _space
+          cd _space
+
+          # Wipe tracked files; rsync fresh deploy on top. Preserve .git.
+          git rm -rf --quiet . || true
+          rsync -a --delete --exclude='.git' ../_deploy/ ./
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No changes to deploy."
+            exit 0
+          fi
+
+          SHA="${GITHUB_SHA::10}"
+          git commit -m "sync from ${GITHUB_REPOSITORY}@${SHA}"
+          git push

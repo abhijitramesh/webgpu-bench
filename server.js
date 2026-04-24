@@ -18,6 +18,9 @@ export function startServer(port = 3000, { noCache = false } = {}) {
       next();
     });
 
+    // JSON parser for POST /api/results.
+    app.use(express.json({ limit: '10mb' }));
+
     // Serve harness files from project root
     app.use(express.static(__dirname, {
       setHeaders: (res, filePath) => {
@@ -47,6 +50,87 @@ export function startServer(port = 3000, { noCache = false } = {}) {
     // With caching (default): first request streams from HF to both client and disk.
     // Subsequent requests serve from disk. With --no-cache: always streams from HF.
     const CACHE_DIR = path.join(__dirname, 'cache', 'models');
+    const RESULTS_DIR = path.join(__dirname, 'results');
+    const RESULTS_FILE = path.join(RESULTS_DIR, 'results.json');
+
+    // Return parsed models.json for the interactive bench page.
+    app.get('/api/models', (req, res) => {
+      try {
+        const modelsPath = path.join(__dirname, 'models.json');
+        const models = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
+        res.json(models);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Cache inventory. With ?path=<repo/file>, returns a single entry.
+    // Without, returns a map of all cached files under cache/models/.
+    app.get('/api/cache-status', (req, res) => {
+      const singlePath = req.query.path;
+      if (typeof singlePath === 'string' && singlePath.length > 0) {
+        // Defend against path traversal by resolving and checking containment.
+        const resolved = path.resolve(CACHE_DIR, singlePath);
+        if (!resolved.startsWith(CACHE_DIR + path.sep) && resolved !== CACHE_DIR) {
+          res.status(400).json({ error: 'Invalid path' });
+          return;
+        }
+        if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+          res.json({ cachedBytes: fs.statSync(resolved).size });
+        } else {
+          res.json({ cachedBytes: 0 });
+        }
+        return;
+      }
+
+      const inventory = {};
+      if (fs.existsSync(CACHE_DIR)) {
+        const walk = (dir, relRoot) => {
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            const rel = path.posix.join(relRoot, entry.name);
+            if (entry.isDirectory()) {
+              walk(full, rel);
+            } else if (entry.isFile() && !entry.name.endsWith('.tmp')) {
+              inventory[rel] = { cachedBytes: fs.statSync(full).size };
+            }
+          }
+        };
+        walk(CACHE_DIR, '');
+      }
+      res.json(inventory);
+    });
+
+    // Append a benchmark result record to results/results.json. Body shape
+    // matches what runner.js produces (one element of the array).
+    app.post('/api/results', (req, res) => {
+      const record = req.body;
+      if (!record || typeof record !== 'object' || Array.isArray(record)) {
+        res.status(400).json({ error: 'Expected a single JSON object' });
+        return;
+      }
+      try {
+        fs.mkdirSync(RESULTS_DIR, { recursive: true });
+        let results = [];
+        if (fs.existsSync(RESULTS_FILE)) {
+          try {
+            const parsed = JSON.parse(fs.readFileSync(RESULTS_FILE, 'utf-8'));
+            if (Array.isArray(parsed)) results = parsed;
+          } catch {
+            // Corrupt file — start over rather than crash. The tmp+rename path
+            // below makes this safe.
+          }
+        }
+        results.push(record);
+        const tmpFile = RESULTS_FILE + '.tmp';
+        fs.writeFileSync(tmpFile, JSON.stringify(results, null, 2));
+        fs.renameSync(tmpFile, RESULTS_FILE);
+        res.json({ status: 'ok', count: results.length });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     app.get('/models/*', async (req, res) => {
       const modelPath = req.params[0];
       const cachePath = path.join(CACHE_DIR, modelPath);
