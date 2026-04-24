@@ -54,9 +54,17 @@ jobs:
           cp harness.html harness.js _deploy/
           cp models.json _deploy/
           cp spaces/README.md _deploy/README.md
-          mkdir -p _deploy/build
-          cp -R build/jspi _deploy/build/jspi
-          cp -R build/asyncify _deploy/build/asyncify
+          # WASM artifacts are gitignored. If a prior local build committed
+          # them as bin/bench.{js,wasm}, sync them; otherwise the Space keeps
+          # the WASM from the last manual `hf upload` push unchanged.
+          if [ -f build/jspi/bin/bench.js ] && [ -f build/asyncify/bin/bench.js ]; then
+            mkdir -p _deploy/build/jspi _deploy/build/asyncify
+            cp build/jspi/bin/bench.js build/jspi/bin/bench.wasm _deploy/build/jspi/
+            cp build/asyncify/bin/bench.js build/asyncify/bin/bench.wasm _deploy/build/asyncify/
+            echo "Included WASM artifacts in bundle."
+          else
+            echo "No build/ artifacts found; leaving Space WASM untouched."
+          fi
           # .nojekyll so GH-style rules don't mangle underscored dirs if any.
           touch _deploy/.nojekyll
           du -sh _deploy | awk '{print "Deploy bundle: "$1}'
@@ -75,9 +83,15 @@ jobs:
           git clone "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE_REPO}" _space
           cd _space
 
-          # Wipe tracked files; rsync fresh deploy on top. Preserve .git.
-          git rm -rf --quiet . || true
-          rsync -a --delete --exclude='.git' ../_deploy/ ./
+          # If the staging bundle included build/*/bench.{js,wasm}, sync
+          # those too; otherwise exclude build/** so the Space's manually-
+          # uploaded WASM is preserved across CI runs.
+          if [ -d ../_deploy/build ]; then
+            RSYNC_EXCLUDES=(--exclude='.git')
+          else
+            RSYNC_EXCLUDES=(--exclude='.git' --exclude='build/**')
+          fi
+          rsync -a --delete "${RSYNC_EXCLUDES[@]}" ../_deploy/ ./
           git add -A
 
           if git diff --cached --quiet; then
