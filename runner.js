@@ -3,7 +3,7 @@
 // This minimises disk usage and avoids redundant downloads.
 // Safari uses WebDriverIO (real Safari) to get actual WebGPU support.
 
-import { chromium, firefox } from 'playwright';
+import { chromium } from 'playwright';
 import { remote } from 'webdriverio';
 import { execSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -44,14 +44,12 @@ function getBrowserLaunchArgs(browserName) {
     return { ...common, args };
   }
 
-  // Firefox: no special args needed
   return common;
 }
 
 function getBrowserType(name) {
   switch (name) {
     case 'chromium': return chromium;
-    case 'firefox':  return firefox;
     default: throw new Error(`Unknown browser: ${name}`);
   }
 }
@@ -110,7 +108,7 @@ function getBaselineTokenIds(baselines, browserName, filename) {
   return baselines[sharedKey]?.[filename] ?? baselines[browserName]?.[filename] ?? null;
 }
 
-// Run a single benchmark via Playwright (chromium, firefox)
+// Run a single benchmark via Playwright (chromium)
 async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null) {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -290,7 +288,7 @@ function deleteModelCache(variant) {
   } catch {}
 }
 
-// Run a variant in a Playwright browser (chromium/firefox) with a hard-kill timeout.
+// Run a variant in a Playwright browser (chromium) with a hard-kill timeout.
 // Launches a fresh browser per variant to prevent WASM memory accumulation.
 // If the browser hangs past the soft timeout, SIGKILL ensures we don't wait forever.
 async function runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds) {
@@ -310,7 +308,7 @@ async function runVariantPlaywright(browserName, variant, serverUrl, timestamp, 
   let hardKilled = false;
 
   // Hard timeout: SIGKILL the browser process if it hangs past the soft timeout.
-  // This prevents hung Firefox processes from blocking the entire run for hours.
+  // This prevents hung browser processes from blocking the entire run for hours.
   const hardTimer = setTimeout(() => {
     hardKilled = true;
     const proc = browser.process();
