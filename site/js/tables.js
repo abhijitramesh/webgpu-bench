@@ -45,48 +45,60 @@ export function renderResultsTable(results) {
   if (!container) return;
 
   if (results.length === 0) {
-    container.innerHTML = '<div class="empty-state"><p>No results match the current filters.</p></div>';
+    container.innerHTML = `
+      <div class="empty-state">
+        <p>No results match the current filters.</p>
+        <p class="empty-state-sub">Try resetting filters above, or <a href="run.html">run the benchmark</a> on your own machine to contribute data.</p>
+      </div>`;
     return;
   }
 
   const sorted = sortState.key ? sortResults(results, sortState.key, sortState.dir) : results;
 
+  /* priority: 1 = always show; 2 = hide below 640px; 3 = hide below 900px */
   const cols = [
-    { key: 'machineSlug', label: 'Machine' },
-    { key: 'model', label: 'Model' },
-    { key: 'variant', label: 'Quant' },
-    { key: 'sizeMB', label: 'Size (MB)' },
-    { key: 'browser', label: 'Browser' },
-    { key: 'nGpuLayers', label: 'Backend' },
-    { key: 'status', label: 'Status' },
-    { key: 'buildType', label: 'Build' },
-    { key: 'webgpuAvailable', label: 'WebGPU' },
-    { key: 'decode_tok_s', label: 'Decode tok/s' },
-    { key: 'prefill_tok_s', label: 'Prefill tok/s' },
-    { key: 'n_eval', label: 'n_eval' },
-    { key: 't_eval_ms', label: 't_eval (ms)' },
-    { key: 'n_p_eval', label: 'n_p_eval' },
-    { key: 't_p_eval_ms', label: 't_p_eval (ms)' },
-    { key: 'wallTimeMs', label: 'Wall (s)' },
-    { key: 'consistency_rate', label: 'CPU Match' },
-    { key: 'llamaCppCommit', label: 'llama.cpp' },
-    { key: 'error', label: 'Error' },
+    { key: 'machineSlug', label: 'Machine', priority: 1 },
+    { key: 'model', label: 'Model', priority: 1 },
+    { key: 'variant', label: 'Quant', priority: 1 },
+    { key: 'sizeMB', label: 'Size (MB)', priority: 3 },
+    { key: 'browser', label: 'Browser', priority: 2 },
+    { key: 'nGpuLayers', label: 'Backend', priority: 2 },
+    { key: 'status', label: 'Status', priority: 1 },
+    { key: 'buildType', label: 'Build', priority: 3 },
+    { key: 'webgpuAvailable', label: 'WebGPU', priority: 3 },
+    { key: 'decode_tok_s', label: 'Decode tok/s', priority: 1 },
+    { key: 'prefill_tok_s', label: 'Prefill tok/s', priority: 3 },
+    { key: 'n_eval', label: 'n_eval', priority: 3 },
+    { key: 't_eval_ms', label: 't_eval (ms)', priority: 3 },
+    { key: 'n_p_eval', label: 'n_p_eval', priority: 3 },
+    { key: 't_p_eval_ms', label: 't_p_eval (ms)', priority: 3 },
+    { key: 'wallTimeMs', label: 'Wall (s)', priority: 3 },
+    { key: 'consistency_rate', label: 'CPU Match', priority: 2 },
+    { key: 'llamaCppCommit', label: 'llama.cpp', priority: 3 },
+    { key: 'error', label: 'Error', priority: 2 },
   ];
 
   let html = '<table class="results-table"><thead><tr>';
-  for (const col of cols) {
+  cols.forEach((col, i) => {
     const isActive = sortState.key === col.key;
-    const arrow = isActive ? (sortState.dir === 'asc' ? ' \u2191' : ' \u2193') : '';
-    const cls = isActive ? ' class="sorted"' : '';
-    html += `<th data-key="${col.key}"${cls}>${col.label}${arrow}</th>`;
-  }
+    const ariaSort = isActive ? (sortState.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+    const arrowChar = isActive ? (sortState.dir === 'asc' ? '\u2191' : '\u2193') : '\u2195';
+    const pin = i === 0 ? ' col-pin col-pin-1' : (i === 1 ? ' col-pin col-pin-2' : '');
+    const prio = col.priority >= 3 ? ' col-p3' : (col.priority === 2 ? ' col-p2' : '');
+    const cls = `sortable${isActive ? ' sorted' : ''}${pin}${prio}`;
+    html += `<th data-key="${col.key}" class="${cls}" aria-sort="${ariaSort}" scope="col" tabindex="0"><span class="th-label">${col.label}</span><span class="th-sort-indicator" aria-hidden="true">${arrowChar}</span></th>`;
+  });
   html += '</tr></thead><tbody>';
 
   for (const r of sorted) {
     const rowClass = r.status === 'done' ? 'row-pass' : 'row-fail';
     html += `<tr class="${rowClass}">`;
-    for (const col of cols) {
-      html += '<td>';
+    cols.forEach((col, i) => {
+      const pin = i === 0 ? 'col-pin col-pin-1' : (i === 1 ? 'col-pin col-pin-2' : '');
+      const prio = col.priority >= 3 ? 'col-p3' : (col.priority === 2 ? 'col-p2' : '');
+      const parts = [pin, prio].filter(Boolean);
+      const cls = parts.length ? ` class="${parts.join(' ')}"` : '';
+      html += `<td${cls}>`;
       switch (col.key) {
         case 'status':
           html += r.status === 'done'
@@ -153,16 +165,22 @@ export function renderResultsTable(results) {
           html += escapeHtml(String(r[col.key] ?? '\u2014'));
       }
       html += '</td>';
-    }
+    });
     html += '</tr>';
   }
 
   html += '</tbody></table>';
   container.innerHTML = html;
 
-  // Wire sort click handlers
+  // Wire sort click + keyboard handlers
   container.querySelectorAll('th[data-key]').forEach(th => {
     th.addEventListener('click', () => handleSort(th.dataset.key));
+    th.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        handleSort(th.dataset.key);
+      }
+    });
   });
 }
 
@@ -172,7 +190,11 @@ export function renderErrorTable(results) {
 
   const errors = results.filter(r => r.status !== 'done' && r.error);
   if (errors.length === 0) {
-    container.innerHTML = '<div class="empty-state"><p>No errors found.</p></div>';
+    container.innerHTML = `
+      <div class="empty-state">
+        <p>No errors in the current filter.</p>
+        <p class="empty-state-sub">Either every benchmark passed, or no results are in scope — try widening the filter.</p>
+      </div>`;
     return;
   }
 
@@ -192,8 +214,18 @@ export function renderMachineInfo(machines) {
   const container = document.getElementById('machine-info');
   if (!container) return;
 
+  const addYourMachineCard = `
+    <a class="machine-card machine-card-add" href="run.html">
+      <div class="machine-card-header">
+        <svg class="machine-card-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <h3>Add your machine</h3>
+      </div>
+      <p class="machine-card-add-blurb">Run the benchmark in your browser and contribute results to the leaderboard.</p>
+      <span class="machine-card-add-cta">Open Run page →</span>
+    </a>`;
+
   if (machines.length === 0) {
-    container.innerHTML = '<div class="empty-state"><p>No machine data.</p></div>';
+    container.innerHTML = `<div class="machine-grid">${addYourMachineCard}</div>`;
     return;
   }
 
@@ -217,6 +249,7 @@ export function renderMachineInfo(machines) {
         </div>
       </div>`;
   }
+  html += addYourMachineCard;
   html += '</div>';
   container.innerHTML = html;
 }

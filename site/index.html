@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <script>(function(){var t=localStorage.getItem('theme')||'light';document.documentElement.setAttribute('data-theme',t);})();</script>
+  <script>(function(){var s=localStorage.getItem('theme');if(!s){s=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}document.documentElement.setAttribute('data-theme',s);})();</script>
   <title>WebGPU Bench</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,7 +19,7 @@
         <svg class="header-logo" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
         <span class="header-title">WebGPU Bench</span>
       </a>
-      <nav class="header-nav">
+      <nav class="header-nav" aria-label="Primary">
         <a href="run.html" class="header-link">Run</a>
         <a href="methodology.html" class="header-link">Methodology</a>
         <button id="theme-toggle" class="header-link theme-toggle-btn" type="button" title="Toggle theme">
@@ -35,14 +35,35 @@
   </header>
 
   <main>
-    <div id="loading" class="loading-state">
-      <div class="loading-content">
-        <div class="loading-spinner"></div>
-        <p>Loading benchmark data...</p>
+    <div id="loading" aria-busy="true" aria-label="Loading benchmark data">
+      <div class="skeleton skeleton-hero" aria-hidden="true"></div>
+      <div class="skeleton skeleton-filters" aria-hidden="true"></div>
+      <div class="skeleton-stats" aria-hidden="true">
+        <div class="skeleton"></div>
+        <div class="skeleton"></div>
+        <div class="skeleton"></div>
       </div>
+      <div class="skeleton skeleton-table" aria-hidden="true"></div>
     </div>
 
     <div id="dashboard" style="display: none;">
+      <!-- Hero -->
+      <section class="hero">
+        <div class="container hero-inner">
+          <div class="hero-copy">
+            <h1 class="hero-title">WebGPU Bench</h1>
+            <p class="hero-lede">Real-browser benchmarks for <code>llama.cpp</code>'s WebGPU backend. GGUF models loaded via WebAssembly, measured across Chrome and Safari.</p>
+            <p class="hero-meta" id="hero-meta" hidden></p>
+          </div>
+          <div class="hero-actions">
+            <a href="run.html" class="btn btn-primary">Run on your machine</a>
+            <a href="methodology.html" class="btn btn-secondary">Methodology</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sticky head: filter bar + section jump links -->
+      <div class="sticky-head">
       <!-- Filter Bar -->
       <div class="filter-bar">
         <div class="filter-bar-inner">
@@ -77,16 +98,16 @@
             </div>
           </div>
           <div class="filter-actions">
-            <button class="filter-reset-btn" id="filter-reset" type="button" style="display: none;" title="Reset all filters">
+            <button class="filter-reset-btn" id="filter-reset" type="button" disabled title="Reset all filters">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-              Reset
+              <span class="filter-reset-label">Reset</span>
             </button>
           </div>
         </div>
       </div>
 
       <!-- Section Navigation -->
-      <nav class="section-nav" id="section-nav">
+      <nav class="section-nav" id="section-nav" aria-label="Dashboard sections">
         <div class="section-nav-track">
           <button class="section-nav-item active" data-section="overview">Overview</button>
           <button class="section-nav-item" data-section="results-section">Results</button>
@@ -95,6 +116,7 @@
           <button class="section-nav-item" data-section="machines-section">Machines</button>
         </div>
       </nav>
+      </div><!-- /sticky-head -->
 
       <!-- Overview -->
       <section id="overview" class="dash-section">
@@ -139,7 +161,7 @@
             <span class="results-count" id="results-count"></span>
           </div>
           <div class="table-card">
-            <div class="results-wrapper" id="results-table"></div>
+            <div class="results-wrapper" id="results-table" tabindex="0" role="region" aria-label="Benchmark results table"></div>
           </div>
         </div>
       </section>
@@ -160,8 +182,8 @@
           <div class="section-header" style="margin-top: 32px;">
             <h3 class="subsection-title">CPU vs WebGPU</h3>
             <div class="metric-selector">
-              <span class="metric-selector-label">Metric</span>
-              <select id="cpu-gpu-metric" class="filter-select">
+              <label class="metric-selector-label" for="cpu-gpu-metric">Metric</label>
+              <select id="cpu-gpu-metric" class="filter-select" aria-label="CPU vs WebGPU metric">
                 <option value="decode_tok_s">Decode tok/s</option>
                 <option value="prefill_tok_s">Prefill tok/s</option>
               </select>

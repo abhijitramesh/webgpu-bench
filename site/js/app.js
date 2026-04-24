@@ -9,7 +9,9 @@ async function init() {
   try {
     appData = await loadData();
   } catch (e) {
-    document.getElementById('loading').innerHTML = `
+    const loading = document.getElementById('loading');
+    loading.className = 'loading-state';
+    loading.innerHTML = `
       <div class="loading-content">
         <p class="loading-error">Failed to load data</p>
         <p class="loading-hint">Run: <code>node scripts/build-site.js</code></p>
@@ -27,6 +29,9 @@ async function init() {
 
   // Populate quant options from actual data
   populateQuantOptions(appData.results);
+
+  // Surface the dataset's last-updated time so users know data freshness.
+  renderHeroMeta(appData);
 
   // Init filter dropdowns
   initFilters(appData.meta, () => render());
@@ -89,13 +94,19 @@ function render() {
       : `${filtered.length} of ${total}`;
   }
 
-  // Reset button visibility
+  // Reset button — always visible so users understand filters can be
+  // cleared; disabled when nothing to reset.
   const resetBtn = document.getElementById('filter-reset');
   if (resetBtn) {
-    const active = filters.machine !== 'all' || filters.browser !== 'all' ||
-      filters.model !== 'all' || filters.backend !== 'all' ||
-      filters.status !== 'all' || filters.quants.size > 0;
-    resetBtn.style.display = active ? '' : 'none';
+    const activeCount = (filters.machine !== 'all' ? 1 : 0) + (filters.browser !== 'all' ? 1 : 0) +
+      (filters.model !== 'all' ? 1 : 0) + (filters.backend !== 'all' ? 1 : 0) +
+      (filters.status !== 'all' ? 1 : 0) + (filters.quants.size > 0 ? 1 : 0);
+    resetBtn.disabled = activeCount === 0;
+    resetBtn.style.display = '';
+    const label = resetBtn.querySelector('.filter-reset-label') || resetBtn;
+    if (label !== resetBtn) {
+      label.textContent = activeCount ? `Reset (${activeCount})` : 'Reset';
+    }
   }
 
   // Tables
@@ -111,9 +122,72 @@ function render() {
 
   // CPU vs GPU comparison
   const metric = document.getElementById('cpu-gpu-metric')?.value || 'decode_tok_s';
+  renderCpuGpuSection(filtered, metric);
+}
+
+/* Consolidate the 3-part CPU-vs-GPU block (two charts + table). When there
+   is no CPU baseline or no overlapping GPU data, render a single inline
+   empty state and hide the charts+table so the user doesn't see the same
+   message repeated three times. */
+function renderCpuGpuSection(filtered, metric) {
+  const chartsGrid = document.querySelector('#performance-section .charts-grid:nth-of-type(2)');
+  const table = document.getElementById('cpu-gpu-table');
+  const passed = filtered.filter(r => r.status === 'done');
+  const cpuResults = passed.filter(r => r.nGpuLayers === 0);
+  const gpuResults = passed.filter(r => r.nGpuLayers !== 0);
+
+  if (!chartsGrid || !table) {
+    renderCpuGpuChart(filtered, metric);
+    renderSpeedupChart(filtered, metric);
+    renderCpuGpuTable(filtered);
+    return;
+  }
+
+  if (cpuResults.length === 0 || gpuResults.length === 0) {
+    chartsGrid.hidden = true;
+    const reason = cpuResults.length === 0
+      ? 'No CPU baseline in the current filter. Select "All Backends" or enable CPU baselines when benchmarking with <code>--consistency</code>.'
+      : 'No WebGPU runs in the current filter. Adjust the Backend filter to include WebGPU.';
+    table.innerHTML = `<div class="empty-state"><p>${reason}</p></div>`;
+    return;
+  }
+
+  chartsGrid.hidden = false;
   renderCpuGpuChart(filtered, metric);
   renderSpeedupChart(filtered, metric);
   renderCpuGpuTable(filtered);
+}
+
+function renderHeroMeta(data) {
+  const el = document.getElementById('hero-meta');
+  if (!el) return;
+  const generated = data?.meta?.generatedAt;
+  const machineCount = data?.meta?.machines?.length || 0;
+  const resultCount = data?.results?.length || 0;
+  const parts = [];
+  if (machineCount > 0) parts.push(`${machineCount} machine${machineCount === 1 ? '' : 's'}`);
+  if (resultCount > 0) parts.push(`${resultCount} benchmark${resultCount === 1 ? '' : 's'}`);
+  if (generated) {
+    const d = new Date(generated);
+    const rel = formatRelativeTime(d);
+    parts.push(`updated ${rel}`);
+  }
+  if (parts.length === 0) return;
+  el.textContent = parts.join(' · ');
+  el.hidden = false;
+  if (generated) el.title = new Date(generated).toLocaleString();
+}
+
+function formatRelativeTime(date) {
+  const now = Date.now();
+  const diff = Math.max(0, now - date.getTime());
+  const min = 60_000, hr = 60 * min, day = 24 * hr;
+  if (diff < min) return 'just now';
+  if (diff < hr) return `${Math.floor(diff / min)} min ago`;
+  if (diff < day) return `${Math.floor(diff / hr)} h ago`;
+  const days = Math.floor(diff / day);
+  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
+  return date.toISOString().slice(0, 10);
 }
 
 function initSectionNav() {
@@ -123,6 +197,10 @@ function initSectionNav() {
   const buttons = nav.querySelectorAll('.section-nav-item');
   const sections = [];
 
+  // Prefer the sticky wrapper height so the jumped-to section isn't
+  // obscured by the sticky head.
+  const stickyHead = document.querySelector('.sticky-head') || nav;
+
   buttons.forEach(btn => {
     const sectionId = btn.dataset.section;
     const section = document.getElementById(sectionId);
@@ -131,29 +209,38 @@ function initSectionNav() {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       if (section) {
-        const navHeight = nav.offsetHeight;
-        const top = section.getBoundingClientRect().top + window.scrollY - navHeight;
+        const offset = stickyHead.offsetHeight + 8;
+        const top = section.getBoundingClientRect().top + window.scrollY - offset;
         window.scrollTo({ top, behavior: 'smooth' });
       }
     });
   });
 
-  // Scroll spy with IntersectionObserver
+  // Scroll spy: instead of IntersectionObserver (which fires inconsistently
+  // when multiple sections overlap the observer band), compute the
+  // currently-active section on scroll by comparing each section's top to
+  // the bottom of the sticky head. Cheaper and predictable.
   if (sections.length === 0) return;
 
-  const observer = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          const id = entry.target.id;
-          buttons.forEach(b => b.classList.toggle('active', b.dataset.section === id));
-        }
-      }
-    },
-    { rootMargin: '-20% 0px -60% 0px' }
-  );
-
-  sections.forEach(({ section }) => observer.observe(section));
+  let ticking = false;
+  const updateActive = () => {
+    const anchor = stickyHead.offsetHeight + 16;
+    let activeId = sections[0].section.id;
+    for (const { section } of sections) {
+      const top = section.getBoundingClientRect().top;
+      if (top - anchor <= 0) activeId = section.id;
+      else break;
+    }
+    buttons.forEach(b => b.classList.toggle('active', b.dataset.section === activeId));
+  };
+  const onScroll = () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => { updateActive(); ticking = false; });
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  updateActive();
 }
 
 init();

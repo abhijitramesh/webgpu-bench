@@ -120,6 +120,15 @@ function flattenVariants(models) {
   return out;
 }
 
+function getQuickVariantSet() {
+  const list = state.models?.quickVariants;
+  return new Set(Array.isArray(list) && list.length ? list : ['Q2_K', 'Q4_K_M', 'Q8_0']);
+}
+
+function isQuickVariant(v) {
+  return getQuickVariantSet().has(v.quant);
+}
+
 function computeWarnings(modelName, quant) {
   const w = [];
   if (/^granite-4/i.test(modelName)) w.push('needs SSM_SCAN');
@@ -153,7 +162,13 @@ function renderHeader() {
 
   const badge = $('run-mode-badge');
   if (badge) {
-    badge.textContent = state.surface;
+    const labels = {
+      localhost: 'Local dev',
+      space: 'Hosted · Hugging Face',
+      pages: 'Read-only preview',
+      file: 'Local file',
+    };
+    badge.textContent = labels[state.surface] || state.surface;
     badge.className = `badge run-mode-badge run-mode-${state.surface}`;
   }
 
@@ -241,31 +256,55 @@ function renderModels() {
   const groups = groupByFamily(state.variants);
   for (const [family, variants] of groups) {
     const fitsCount = variants.filter(variantFitsDevice).length;
-    const allFit = fitsCount === variants.length;
+    const quickFitCount = variants.filter(v => isQuickVariant(v) && variantFitsDevice(v)).length;
 
-    const familyEl = document.createElement('details');
+    // Card wrapper (not <details>, to avoid nested-interactive with the
+    // family-level checkbox). A dedicated toggle button expands/collapses
+    // the variant list.
+    const familyEl = document.createElement('section');
     familyEl.className = 'run-family card';
     familyEl.dataset.family = family;
-    familyEl.open = true;
 
-    const summary = document.createElement('summary');
-    summary.className = 'run-family-summary';
-    summary.innerHTML = `
-      <span class="run-family-chevron" aria-hidden="true"></span>
-      <input type="checkbox" class="run-family-select-all" data-family="${escapeAttr(family)}"${allFit ? ' checked' : ''}>
-      <span class="run-family-name">${escapeText(family)}</span>
-      <span class="run-family-stats">${variants.length} variants · ${fitsCount} fit</span>
-    `;
+    const header = document.createElement('div');
+    header.className = 'run-family-summary';
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'run-family-toggle';
+    toggleBtn.setAttribute('aria-expanded', 'false');
+    toggleBtn.setAttribute('aria-label', `Expand ${family}`);
+    toggleBtn.innerHTML = '<span class="run-family-chevron" aria-hidden="true"></span>';
+
+    const selectAllId = `run-family-all-${family.replace(/[^a-z0-9]/gi, '-')}`;
+    const selectAll = document.createElement('input');
+    selectAll.type = 'checkbox';
+    selectAll.className = 'run-family-select-all';
+    selectAll.dataset.family = family;
+    selectAll.id = selectAllId;
+    selectAll.setAttribute('aria-label', `Select all variants in ${family}`);
+
+    const nameLabel = document.createElement('label');
+    nameLabel.className = 'run-family-name';
+    nameLabel.htmlFor = selectAllId;
+    nameLabel.textContent = family;
+
+    const stats = document.createElement('span');
+    stats.className = 'run-family-stats';
+    stats.textContent = `${variants.length} variants · ${fitsCount} fit · ${quickFitCount} quick`;
+
+    header.append(toggleBtn, selectAll, nameLabel, stats);
+
     if (/^granite-4/i.test(family)) {
       const w = document.createElement('span');
       w.className = 'run-family-warning';
       w.textContent = '⚠ needs SSM_SCAN in llama.cpp';
-      summary.appendChild(w);
+      header.appendChild(w);
     }
-    familyEl.appendChild(summary);
+    familyEl.appendChild(header);
 
     const list = document.createElement('div');
     list.className = 'run-variant-list';
+    list.hidden = true;
 
     for (const v of variants) {
       const row = document.createElement('label');
@@ -277,7 +316,7 @@ function renderModels() {
       cb.type = 'checkbox';
       cb.className = 'run-variant-select';
       cb.dataset.key = cacheKey(v);
-      cb.checked = variantFitsDevice(v);
+      cb.checked = isQuickVariant(v) && variantFitsDevice(v);
 
       const quant = document.createElement('span');
       quant.className = 'run-variant-quant';
@@ -300,7 +339,25 @@ function renderModels() {
     }
     familyEl.appendChild(list);
     panel.appendChild(familyEl);
+
+    updateFamilySelectAllState(family);
   }
+}
+
+function updateFamilySelectAllState(family) {
+  const panel = $('run-models');
+  if (!panel) return;
+  const familyEl = panel.querySelector(
+    `.run-family[data-family="${cssEscape(family)}"]`,
+  );
+  if (!familyEl) return;
+  const rows = familyEl.querySelectorAll('.run-variant-select');
+  const all = rows.length;
+  const checked = [...rows].filter(cb => cb.checked).length;
+  const selectAll = familyEl.querySelector('.run-family-select-all');
+  if (!selectAll) return;
+  selectAll.checked = checked === all && all > 0;
+  selectAll.indeterminate = checked > 0 && checked < all;
 }
 
 function updateBadgesForVariant(badgesEl, v) {
@@ -346,19 +403,39 @@ function wireSelectionHandlers() {
     if (t.classList?.contains('run-family-select-all')) {
       const family = t.dataset.family;
       const rows = panel.querySelectorAll(
-        `details.run-family[data-family="${cssEscape(family)}"] .run-variant-select`,
+        `.run-family[data-family="${cssEscape(family)}"] .run-variant-row`,
       );
-      rows.forEach(cb => { cb.checked = t.checked; });
+      // Only affect fit variants — checking non-fit can cause OOM on the
+      // user's device, which is actively dangerous.
+      rows.forEach(row => {
+        if (row.classList.contains('is-non-fit')) return;
+        const cb = row.querySelector('.run-variant-select');
+        if (cb) cb.checked = t.checked;
+      });
+      updateFamilySelectAllState(family);
       updateButtons();
     } else if (t.classList?.contains('run-variant-select')) {
+      const familyEl = t.closest('.run-family');
+      if (familyEl) updateFamilySelectAllState(familyEl.dataset.family);
       updateButtons();
     }
   });
-  // Prevent the select-all toggling expand/collapse.
   panel.addEventListener('click', (e) => {
-    if (e.target.classList?.contains('run-family-select-all')) {
-      e.stopPropagation();
+    // Clicks on the select-all checkbox or name label must not toggle
+    // expansion — they have their own semantics.
+    if (e.target.closest('.run-family-select-all, .run-family-name, .run-variant-list, .run-variant-row')) {
+      return;
     }
+    const header = e.target.closest?.('.run-family-summary');
+    if (!header) return;
+    const familyEl = header.closest('.run-family');
+    const list = familyEl?.querySelector('.run-variant-list');
+    const toggle = familyEl?.querySelector('.run-family-toggle');
+    if (!list || !toggle) return;
+    const expanded = !list.hidden;
+    list.hidden = expanded;
+    toggle.setAttribute('aria-expanded', String(!expanded));
+    familyEl.classList.toggle('is-open', !expanded);
   });
 }
 
@@ -366,6 +443,28 @@ function wireFilters() {
   ['hide-ud', 'hide-iq', 'hide-hifp'].forEach(id => {
     const el = $(id);
     if (el) el.addEventListener('change', applyFilters);
+  });
+}
+
+function wireBatchSelect() {
+  const apply = (pred) => {
+    document.querySelectorAll('.run-variant-select').forEach(cb => {
+      const v = state.variants.find(x => cacheKey(x) === cb.dataset.key);
+      cb.checked = pred(v);
+    });
+    document.querySelectorAll('.run-family').forEach(el => {
+      if (el.dataset.family) updateFamilySelectAllState(el.dataset.family);
+    });
+    updateButtons();
+  };
+  $('btn-select-quick')?.addEventListener('click', () => {
+    apply(v => !!v && isQuickVariant(v) && variantFitsDevice(v));
+  });
+  $('btn-select-fit')?.addEventListener('click', () => {
+    apply(v => !!v && variantFitsDevice(v));
+  });
+  $('btn-select-none')?.addEventListener('click', () => {
+    apply(() => false);
   });
 }
 
@@ -390,6 +489,7 @@ function applyFilters() {
   const hideUd = $('hide-ud')?.checked;
   const hideIq = $('hide-iq')?.checked;
   const hideHifp = $('hide-hifp')?.checked;
+  const hiddenByFamily = new Map();
   document.querySelectorAll('.run-variant-row').forEach(row => {
     const v = state.variants.find(x => cacheKey(x) === row.dataset.key);
     if (!v) return;
@@ -398,7 +498,27 @@ function applyFilters() {
     const isHifp = /^(BF16|F16|bf16|f16)$/.test(v.quant);
     const hide = (hideUd && isUd) || (hideIq && isIq) || (hideHifp && isHifp);
     row.style.display = hide ? 'none' : '';
+    if (hide) hiddenByFamily.set(v.modelName, (hiddenByFamily.get(v.modelName) || 0) + 1);
   });
+  // Refresh the per-family stats line so users see hidden filter impact.
+  document.querySelectorAll('.run-family').forEach(familyEl => {
+    const family = familyEl.dataset.family;
+    const all = [...familyEl.querySelectorAll('.run-variant-row')];
+    const visible = all.filter(r => r.style.display !== 'none').length;
+    const fit = all.filter(r => !r.classList.contains('is-non-fit') && r.style.display !== 'none').length;
+    const quick = all.filter(r => {
+      if (r.style.display === 'none' || r.classList.contains('is-non-fit')) return false;
+      const v = state.variants.find(x => cacheKey(x) === r.dataset.key);
+      return v && isQuickVariant(v);
+    }).length;
+    const stats = familyEl.querySelector('.run-family-stats');
+    if (!stats) return;
+    const hiddenCount = hiddenByFamily.get(family) || 0;
+    const base = `${visible} variants · ${fit} fit · ${quick} quick`;
+    stats.textContent = hiddenCount > 0 ? `${base} · ${hiddenCount} hidden` : base;
+  });
+  // A selected-but-now-hidden variant is a footgun; re-count the queue.
+  updateButtons();
 }
 
 function getCheckedVariants() {
@@ -415,9 +535,18 @@ function updateButtons() {
   const ab = $('btn-abort'); if (ab) { ab.disabled = !state.running; ab.hidden = !state.running; }
   const status = $('queue-status');
   if (status) {
-    status.textContent = checked.length
-      ? `${checked.length} selected · ${cachedChecked.length} cached`
-      : '';
+    if (checked.length === 0) {
+      status.textContent = '';
+    } else {
+      const toDownload = checked.filter(v => !isCached(v));
+      const dlMB = toDownload.reduce((a, v) => a + (v.sizeMB || 0), 0);
+      const parts = [
+        `${checked.length} selected`,
+        `${cachedChecked.length} cached`,
+      ];
+      if (dlMB > 0) parts.push(`~${formatSize(dlMB)} to download`);
+      status.textContent = parts.join(' · ');
+    }
   }
 }
 
@@ -426,6 +555,13 @@ function updateButtons() {
 function ensureProgressTable() {
   const wrap = $('run-progress-wrapper');
   if (!wrap) return null;
+  // Reveal the progress card + its header — they are hidden by default on
+  // mount so the user doesn't see an empty "Progress" scaffold, but we must
+  // un-hide them as soon as the first row (download or run) appears.
+  const card = wrap.closest('.table-card');
+  if (card) card.hidden = false;
+  const header = card?.previousElementSibling;
+  if (header?.classList?.contains('section-header')) header.hidden = false;
   let table = wrap.querySelector('table');
   if (!table) {
     table = document.createElement('table');
@@ -832,6 +968,26 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function renderOutput() {
   const ta = $('output-textarea');
   if (ta) ta.value = generateMarkdown(state.results);
+  // Reflect emptiness: collapse the textarea, disable copy/download.
+  const hasContent = !!ta?.value;
+  const outputCard = document.querySelector('.run-output');
+  if (outputCard) outputCard.classList.toggle('is-empty', !hasContent);
+  const copyBtn = $('btn-copy');
+  const dlJson = $('btn-download-json');
+  if (copyBtn) copyBtn.disabled = !hasContent;
+  if (dlJson) dlJson.disabled = !hasContent;
+}
+
+/* Hide the Progress scaffolding at mount so we don't show an empty
+   placeholder. `ensureProgressTable` un-hides it the moment a download or
+   run row appears. */
+function hideProgressUntilFirstRow() {
+  const wrap = $('run-progress-wrapper');
+  if (!wrap) return;
+  const card = wrap.closest('.table-card');
+  if (card) card.hidden = true;
+  const header = card?.previousElementSibling;
+  if (header?.classList?.contains('section-header')) header.hidden = true;
 }
 
 function generateMarkdown(results) {
@@ -1026,6 +1182,7 @@ export async function mountRunSection() {
   renderModels();
   wireSelectionHandlers();
   wireFilters();
+  wireBatchSelect();
   wireIterationsInput();
   wireRunHandlers();
   wireAbortHandler();
@@ -1033,6 +1190,8 @@ export async function mountRunSection() {
   wireHubHandlers();
   wireOutputHandlers();
   updateButtons();
+  renderOutput();
+  hideProgressUntilFirstRow();
 }
 
 export function teardownRunSection() {

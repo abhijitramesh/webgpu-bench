@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
+  <script>(function(){var s=localStorage.getItem('theme');if(!s){s=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}document.documentElement.setAttribute('data-theme',s);})();</script>
   <title>Methodology — WebGPU Bench</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,20 +18,48 @@
         <svg class="header-logo" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
         <span class="header-title">WebGPU Bench</span>
       </a>
-      <nav class="header-nav">
+      <nav class="header-nav" aria-label="Primary">
         <a href="index.html" class="header-link">Dashboard</a>
         <a href="run.html" class="header-link">Run</a>
+        <button id="theme-toggle" class="header-link theme-toggle-btn" type="button" title="Toggle theme">
+          <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+        <a href="https://github.com/abhijitramesh/webgpu-bench" target="_blank" rel="noopener" class="header-link">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5 1 .11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.02 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.82.58C20.57 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
       </nav>
     </div>
   </header>
 
-  <div class="methodology-content">
+  <main class="methodology-layout">
+    <nav class="methodology-toc" aria-label="Table of contents">
+      <p class="methodology-toc-title">On this page</p>
+      <ol>
+        <li><a href="#how-benchmarks-work">How Benchmarks Work</a></li>
+        <li><a href="#dashboard-columns">Dashboard Columns</a></li>
+        <li><a href="#error-categories">Error Categories</a></li>
+        <li>
+          <a href="#consistency-measurement">Consistency Measurement</a>
+          <ol>
+            <li><a href="#how-it-works">How it works</a></li>
+            <li><a href="#why-forced-decoding">Why forced decoding</a></li>
+            <li><a href="#interpreting-cpu-match">Interpreting CPU Match</a></li>
+          </ol>
+        </li>
+      </ol>
+    </nav>
+
+    <div class="methodology-content">
     <a href="index.html" class="back-link">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
       Back to Dashboard
     </a>
 
-    <h2>How Benchmarks Work</h2>
+    <h1>Methodology</h1>
+
+    <h2 id="how-benchmarks-work">How Benchmarks Work</h2>
     <ol>
       <li><code>build.sh</code> compiles llama.cpp to WebAssembly with WebGPU support via Emscripten + emdawnwebgpu, producing two WASM variants: JSPI (Chrome) and Asyncify (Firefox, Safari).</li>
       <li><code>runner.js</code> launches Playwright browsers and navigates to <code>harness.html</code>.</li>
@@ -41,7 +70,7 @@
       <li>A fresh browser instance is launched for each variant to prevent WASM memory accumulation (OOM fix).</li>
     </ol>
 
-    <h2>Dashboard Columns</h2>
+    <h2 id="dashboard-columns">Dashboard Columns</h2>
     <table>
       <thead>
         <tr><th>Column</th><th>Description</th></tr>
@@ -67,7 +96,7 @@
       </tbody>
     </table>
 
-    <h2>Error Categories</h2>
+    <h2 id="error-categories">Error Categories</h2>
     <table>
       <thead>
         <tr><th>Category</th><th>Pattern</th><th>Typical Cause</th></tr>
@@ -81,20 +110,20 @@
       </tbody>
     </table>
 
-    <h2>Consistency Measurement</h2>
+    <h2 id="consistency-measurement">Consistency Measurement</h2>
     <p>The <code>--consistency</code> flag measures how faithfully the WebGPU backend reproduces the CPU computation for each quantization type.</p>
 
-    <h3>How it works</h3>
+    <h3 id="how-it-works">How it works</h3>
     <p>For each variant, two runs are performed:</p>
     <ol>
       <li><strong>CPU baseline</strong> (<code>n_gpu_layers=0</code>): greedy-decodes 128 tokens and records the token ID sequence. Cached to <code>results/cpu_baselines.json</code>. When testing multiple browsers, the baseline is collected once on the first browser and shared across all browsers (CPU output is identical regardless of JSPI vs Asyncify). When testing a single browser, the baseline runs in that same browser.</li>
       <li><strong>WebGPU run</strong> (<code>n_gpu_layers=999</code>): performs a forced-decoding pass — feeds the CPU's token sequence one token at a time and checks whether the WebGPU backend independently predicts the same top-1 token at each position.</li>
     </ol>
 
-    <h3>Why forced decoding</h3>
+    <h3 id="why-forced-decoding">Why forced decoding</h3>
     <p>Naively comparing generated text suffers from cascading divergence: a single token difference changes the KV cache context for all subsequent tokens. Forced decoding evaluates each position independently, giving a clean per-token accuracy signal.</p>
 
-    <h3>Interpreting CPU Match</h3>
+    <h3 id="interpreting-cpu-match">Interpreting CPU Match</h3>
     <table>
       <thead>
         <tr><th>CPU Match</th><th>Interpretation</th></tr>
@@ -107,6 +136,40 @@
         <tr><td><code>—</code></td><td>No consistency data — benchmarks were run without <code>--consistency</code></td></tr>
       </tbody>
     </table>
-  </div>
+    </div>
+  </main>
+
+  <script>
+    document.getElementById('theme-toggle')?.addEventListener('click', () => {
+      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+    });
+
+    // ToC scroll-spy: mark active link based on the topmost visible heading.
+    (function() {
+      const links = [...document.querySelectorAll('.methodology-toc a[href^="#"]')];
+      const targets = links
+        .map(a => ({ a, el: document.getElementById(a.getAttribute('href').slice(1)) }))
+        .filter(x => x.el);
+      if (targets.length === 0) return;
+      let ticking = false;
+      function update() {
+        const anchor = 120;
+        let active = targets[0].a;
+        for (const t of targets) {
+          if (t.el.getBoundingClientRect().top - anchor <= 0) active = t.a;
+          else break;
+        }
+        links.forEach(l => l.classList.toggle('active', l === active));
+      }
+      window.addEventListener('scroll', () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(() => { update(); ticking = false; });
+      }, { passive: true });
+      update();
+    })();
+  </script>
 </body>
 </html>
