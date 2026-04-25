@@ -1593,11 +1593,30 @@ export async function mountRunSection() {
   if (typeof window !== 'undefined') {
     const params = new URLSearchParams(location.search);
     if (params.get('code') && params.get('state') && isHFPopupCallback()) {
-      document.body.innerHTML =
-        '<div style="padding:32px;font-family:system-ui,sans-serif;font-size:14px;color:#444">'
-        + 'Signing in… you can close this tab if it doesn\'t close automatically.'
-        + '</div>';
+      document.body.innerHTML = `
+        <div style="padding:48px 32px;font-family:system-ui,sans-serif;color:#222;max-width:480px;margin:0 auto;text-align:center">
+          <div id="hf-popup-status" style="font-size:15px;line-height:1.5">Completing sign-in…</div>
+          <button id="hf-popup-close" type="button" hidden
+            style="margin-top:24px;padding:8px 16px;font:inherit;border:1px solid #ccc;border-radius:6px;background:#f6f6f6;cursor:pointer">
+            Close this tab
+          </button>
+        </div>
+      `;
+      // Restore visibility — the inline guard in run.html hid <html> to avoid
+      // a bench-skeleton flash; we own the body now and want our message visible.
+      document.documentElement.style.visibility = '';
       try { await resumeHFSession(); } catch { /* logged inside */ }
+      // resumeHFSession already calls window.close(); if the browser denies
+      // it (Firefox is strict; some COOP cases too), surface a clear message
+      // and a manual close button. The parent tab already updated via the
+      // storage event triggered by the token write.
+      const status = document.getElementById('hf-popup-status');
+      const closeBtn = document.getElementById('hf-popup-close');
+      if (status) status.textContent = 'Signed in. You can close this tab.';
+      if (closeBtn) {
+        closeBtn.hidden = false;
+        closeBtn.addEventListener('click', () => { try { window.close(); } catch {} });
+      }
       return;
     }
   }
