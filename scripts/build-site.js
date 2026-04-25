@@ -35,6 +35,12 @@ function main() {
 
     // Extract llama.cpp commit(s) used in this machine's results
     const llamaCommits = [...new Set(data.results.map(r => r.llamaCppCommit).filter(Boolean))];
+    // Pair the surfaced commit with its describe (when present) so the
+    // machine card can show the readable "b8708-12-gd12cc3d1c" label.
+    const firstCommit = llamaCommits[0] || null;
+    const llamaDescribe = firstCommit
+      ? data.results.find(r => r.llamaCppCommit === firstCommit && r.llamaCppDescribe)?.llamaCppDescribe || null
+      : null;
 
     // Aggregate every submitter who's contributed results on this machine,
     // ranked by submission count (descending) so the most-active contributor
@@ -68,7 +74,8 @@ function main() {
       submittedAt: data.submittedAt,
       resultCount: data.results.length,
       passCount: data.results.filter(r => r.status === 'done').length,
-      llamaCppCommit: llamaCommits[0] || null,
+      llamaCppCommit: firstCommit,
+      llamaCppDescribe: llamaDescribe,
       submitters,
     });
 
@@ -97,7 +104,16 @@ function main() {
         t_eval_ms: r.metrics?.t_eval_ms ?? null,
         consistency_rate: r.consistency?.agreement_rate ?? null,
         consistency_first_disagree: r.consistency?.first_disagreement ?? null,
+        // CPU baseline: stamped by the worker as a sanity check for the GPU
+        // numbers. Surface alongside the GPU rates so reviewers can spot a
+        // regression where the GPU path silently fell back to CPU.
+        cpu_baseline_prefill_tok_s: r.cpu_baseline?.prefill_tok_s ?? null,
+        cpu_baseline_decode_tok_s: r.cpu_baseline?.decode_tok_s ?? null,
         llamaCppCommit: r.llamaCppCommit ?? null,
+        // Human-readable git describe of the llama.cpp build (e.g.
+        // "b8708-12-gd12cc3d1c"). Falls back to short commit when missing.
+        llamaCppDescribe: r.llamaCppDescribe ?? null,
+        dawnTag: r.dawnTag ?? null,
         submittedBy: r.submittedBy ?? null,
         // Iterations — primary tiebreak when multiple submissions cover the
         // same (machine, browser, model, variant) cell. The dashboard

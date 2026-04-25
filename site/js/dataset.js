@@ -96,6 +96,7 @@ export async function fetchRecentRuns(datasetRepo, sinceISO) {
           resultCount: 0,
           passCount: 0,
           llamaCppCommit: r.llamaCppCommit ?? null,
+          llamaCppDescribe: r.llamaCppDescribe ?? null,
         });
       }
     }
@@ -131,7 +132,13 @@ function flattenForDashboard(r, slug) {
     t_eval_ms: r.metrics?.t_eval_ms ?? null,
     consistency_rate: r.consistency?.agreement_rate ?? null,
     consistency_first_disagree: r.consistency?.first_disagreement ?? null,
+    // Keep these in sync with scripts/build-site.js — the dashboard merges
+    // baseline (combined.json) and live (here) records into one table.
+    cpu_baseline_prefill_tok_s: r.cpu_baseline?.prefill_tok_s ?? null,
+    cpu_baseline_decode_tok_s: r.cpu_baseline?.decode_tok_s ?? null,
     llamaCppCommit: r.llamaCppCommit ?? null,
+    llamaCppDescribe: r.llamaCppDescribe ?? null,
+    dawnTag: r.dawnTag ?? null,
     submittedBy: r.submittedBy ?? null,
     iterations: r.metrics?.iterations ?? null,
   };

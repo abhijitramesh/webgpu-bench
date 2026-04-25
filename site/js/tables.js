@@ -4,7 +4,9 @@ let lastResults = [];
 let sortState = { key: null, dir: 'asc' };
 
 const NUM_KEYS = new Set([
-  'sizeMB', 'decode_tok_s', 'prefill_tok_s', 'n_eval', 't_eval_ms',
+  'sizeMB', 'decode_tok_s', 'prefill_tok_s',
+  'cpu_baseline_decode_tok_s', 'cpu_baseline_prefill_tok_s',
+  'n_eval', 't_eval_ms',
   'n_p_eval', 't_p_eval_ms', 'wallTimeMs', 'consistency_rate', 'nGpuLayers',
 ]);
 
@@ -75,6 +77,8 @@ export function renderResultsTable(results) {
     { key: 'webgpuAvailable', label: 'WebGPU', priority: 3 },
     { key: 'decode_tok_s', label: 'Decode tok/s', priority: 1 },
     { key: 'prefill_tok_s', label: 'Prefill tok/s', priority: 3 },
+    { key: 'cpu_baseline_decode_tok_s', label: 'CPU decode tok/s', priority: 2 },
+    { key: 'cpu_baseline_prefill_tok_s', label: 'CPU prefill tok/s', priority: 3 },
     { key: 'n_eval', label: 'n_eval', priority: 3 },
     { key: 't_eval_ms', label: 't_eval (ms)', priority: 3 },
     { key: 'n_p_eval', label: 'n_p_eval', priority: 3 },
@@ -127,6 +131,8 @@ export function renderResultsTable(results) {
           break;
         case 'decode_tok_s':
         case 'prefill_tok_s':
+        case 'cpu_baseline_decode_tok_s':
+        case 'cpu_baseline_prefill_tok_s':
           html += `<span class="mono">${formatTokS(r[col.key])}</span>`;
           break;
         case 't_eval_ms':
@@ -151,8 +157,10 @@ export function renderResultsTable(results) {
           break;
         case 'llamaCppCommit':
           if (r.llamaCppCommit) {
-            const short = r.llamaCppCommit.slice(0, 10);
-            html += `<a class="mono" href="https://github.com/ggml-org/llama.cpp/commit/${r.llamaCppCommit}" target="_blank" rel="noopener">${short}</a>`;
+            // Prefer the human-readable git describe when present (e.g.
+            // "b8708-12-gd12cc3d1c"); fall back to a short commit hash.
+            const label = r.llamaCppDescribe || r.llamaCppCommit.slice(0, 10);
+            html += `<a class="mono" href="https://github.com/ggml-org/llama.cpp/commit/${r.llamaCppCommit}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
           } else {
             html += '<span class="text-muted">\u2014</span>';
           }
@@ -259,7 +267,7 @@ export function renderMachineInfo(machines) {
           <div class="spec-row"><span class="spec-label">Results</span><span class="spec-value">${m.resultCount}</span></div>
           <div class="spec-row"><span class="spec-label">Passed</span><span class="spec-value text-success">${m.passCount}</span></div>
           <div class="spec-row"><span class="spec-label">Failed</span><span class="spec-value text-error">${failCount}</span></div>
-          ${m.llamaCppCommit ? `<div class="spec-row"><span class="spec-label">llama.cpp</span><span class="spec-value"><a href="https://github.com/ggml-org/llama.cpp/commit/${m.llamaCppCommit}" target="_blank" rel="noopener">${m.llamaCppCommit.slice(0, 10)}</a></span></div>` : ''}
+          ${m.llamaCppCommit ? `<div class="spec-row"><span class="spec-label">llama.cpp</span><span class="spec-value"><a href="https://github.com/ggml-org/llama.cpp/commit/${m.llamaCppCommit}" target="_blank" rel="noopener">${escapeHtml(m.llamaCppDescribe || m.llamaCppCommit.slice(0, 10))}</a></span></div>` : ''}
         </div>
       </div>`;
   }
