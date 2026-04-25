@@ -41,6 +41,8 @@ export async function resumeHFSession() {
         accessToken: res.accessToken,
         expiresAt: res.accessTokenExpiresAt,
         userName: res.userInfo?.preferred_username || res.userInfo?.name || null,
+        avatarUrl: res.userInfo?.picture || null,
+        hubId: res.userInfo?.sub || null,
       }));
       // Clean up the OAuth query params so a reload doesn't retry.
       const url = new URL(location.href);
@@ -115,6 +117,9 @@ export async function fetchWhoAmI(token) {
  * @param {string} opts.datasetRepo — "owner/name" of the dataset.
  * @param {string} opts.machineSlug
  * @param {string} opts.browser
+ * @param {{name: string, hubId?: string, avatarUrl?: string}} [opts.submittedBy]
+ *   — captured from the OAuth session and stamped onto each record so the
+ *   dashboard can attribute submissions back to a HF user.
  * @returns {Promise<{ path: string, commit?: string, prUrl?: string }>}
  */
 export async function submitResultsToDataset(results, {
@@ -122,6 +127,7 @@ export async function submitResultsToDataset(results, {
   datasetRepo = HF_DATASET_REPO,
   machineSlug,
   browser,
+  submittedBy = null,
 }) {
   if (!datasetRepo) throw new Error('HF_DATASET_REPO is not configured.');
   if (!token) throw new Error('Not signed in — call beginHFSignIn() first.');
@@ -129,10 +135,17 @@ export async function submitResultsToDataset(results, {
     throw new Error('No results to submit.');
   }
 
+  // Stamp attribution onto each record. Per-record (rather than file-level)
+  // so the existing `Array.isArray(records)` parse path in
+  // sync-from-dataset.mjs and submit-results.js keeps working unchanged.
+  const stamped = submittedBy
+    ? results.map(r => ({ ...r, submittedBy }))
+    : results;
+
   const epoch = Date.now();
   const date = new Date().toISOString().slice(0, 10);
   const path = `runs/${date}/${machineSlug || 'unknown'}-${browser || 'browser'}-${epoch}.json`;
-  const body = JSON.stringify(results, null, 2);
+  const body = JSON.stringify(stamped, null, 2);
   const blob = new Blob([body], { type: 'application/json' });
 
   const res = await uploadFile({

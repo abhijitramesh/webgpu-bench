@@ -1,4 +1,4 @@
-import { loadData, filterResults } from './data.js';
+import { loadData, filterResults, selectBestResults } from './data.js';
 import { initFilters, populateQuantOptions, getFilters, resetFilters } from './filters.js';
 import { renderDecodeChart, renderPrefillChart, renderSizeChart, renderMachineChart, renderCpuGpuChart, renderSpeedupChart } from './charts.js';
 import { renderResultsTable, renderErrorTable, renderMachineInfo, renderCpuGpuTable } from './tables.js';
@@ -76,7 +76,12 @@ function render() {
   Chart.defaults.plugins.tooltip.bodyColor = isDark ? '#a1a1aa' : '#71717a';
 
   const filters = getFilters();
-  const filtered = filterResults(appData.results, filters);
+  // Filter, then collapse to one canonical row per
+  // (machine, browser, model, variant). Multiple users may submit results
+  // for the same hardware bucket; this keeps the row with the highest
+  // iteration count (tiebreak: most recent) so the leaderboard shows the
+  // most reliable number per cell rather than averaging noisy duplicates.
+  const filtered = selectBestResults(filterResults(appData.results, filters));
 
   // Summary cards — counts tween from previous value to new on filter changes
   // and from 0 on first paint (since `data-value` defaults to "0").
@@ -193,8 +198,11 @@ function renderHeroMeta(data) {
     liveEl.hidden = false;
   }
 
-  // Hero stat: top decode tok/s with machine + model context.
-  const passed = (data?.results || []).filter(r => r.status === 'done' && r.decode_tok_s != null);
+  // Hero stat: top decode tok/s with machine + model context. Uses the
+  // canonical set (best per cell) so a noisy 1-iteration outlier can't
+  // hijack the headline number.
+  const canonical = selectBestResults(data?.results || []);
+  const passed = canonical.filter(r => r.status === 'done' && r.decode_tok_s != null);
   const heroStatEl = document.getElementById('hero-stat');
   const heroNumEl = document.getElementById('hero-top-decode');
   const heroMetaEl = document.getElementById('hero-top-meta');

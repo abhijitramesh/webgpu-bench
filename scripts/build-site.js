@@ -36,6 +36,29 @@ function main() {
     // Extract llama.cpp commit(s) used in this machine's results
     const llamaCommits = [...new Set(data.results.map(r => r.llamaCppCommit).filter(Boolean))];
 
+    // Aggregate every submitter who's contributed results on this machine,
+    // ranked by submission count (descending) so the most-active contributor
+    // surfaces first on the dashboard. Ties on count fall back to most-recent
+    // submission. Stays per-machine because each card is per-machine.
+    const submitterCounts = new Map();
+    const submitterLatest = new Map();
+    for (const r of data.results) {
+      const sb = r.submittedBy;
+      if (!sb?.name) continue;
+      const key = sb.hubId || sb.name;
+      submitterCounts.set(key, (submitterCounts.get(key) || 0) + 1);
+      if (!submitterLatest.has(key) || r.timestamp > submitterLatest.get(key).timestamp) {
+        submitterLatest.set(key, { profile: sb, timestamp: r.timestamp || '' });
+      }
+    }
+    const submitters = [...submitterCounts.entries()]
+      .map(([key, count]) => ({
+        ...submitterLatest.get(key).profile,
+        count,
+        latestAt: submitterLatest.get(key).timestamp,
+      }))
+      .sort((a, b) => b.count - a.count || (b.latestAt || '').localeCompare(a.latestAt || ''));
+
     machines.push({
       slug,
       cpus: data.machine.cpus,
@@ -46,6 +69,7 @@ function main() {
       resultCount: data.results.length,
       passCount: data.results.filter(r => r.status === 'done').length,
       llamaCppCommit: llamaCommits[0] || null,
+      submitters,
     });
 
     for (const r of data.results) {
@@ -74,6 +98,11 @@ function main() {
         consistency_rate: r.consistency?.agreement_rate ?? null,
         consistency_first_disagree: r.consistency?.first_disagreement ?? null,
         llamaCppCommit: r.llamaCppCommit ?? null,
+        submittedBy: r.submittedBy ?? null,
+        // Iterations — primary tiebreak when multiple submissions cover the
+        // same (machine, browser, model, variant) cell. The dashboard
+        // canonicalizes to the row with most iterations (then latest).
+        iterations: r.metrics?.iterations ?? null,
       };
 
       allResults.push(flat);

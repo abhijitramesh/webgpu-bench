@@ -1207,6 +1207,75 @@ a:hover { color: var(--info); }
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
+
+/* Attribution row — stacked avatars + @username for the most-active
+   contributor. Sits between the header and the specs grid; collapses
+   cleanly when no contributors are known (older records). */
+.machine-card-submitters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -8px 0 14px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--foreground-secondary);
+  min-width: 0;
+}
+.machine-card-submitter-pips {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.machine-card-submitter-pip {
+  display: inline-flex;
+  border-radius: 50%;
+  /* 2px ring against the card surface so overlapping circles read clearly. */
+  box-shadow: 0 0 0 2px var(--surface-1);
+  transition: transform var(--transition-fast);
+  text-decoration: none;
+}
+.machine-card-submitter-pip:hover {
+  transform: translateY(-1px);
+  z-index: 2;
+}
+.machine-card-submitter-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: block;
+  object-fit: cover;
+  background: var(--surface-3);
+}
+.machine-card-submitter-avatar--placeholder {
+  background: linear-gradient(135deg, var(--signal-bg), var(--accent-violet-bg));
+}
+.machine-card-submitter-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: -8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--foreground-secondary);
+  box-shadow: 0 0 0 2px var(--surface-1);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: default;
+}
+.machine-card-submitter-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--foreground);
+  font-weight: 500;
+  min-width: 0;
+}
+.machine-card-submitter-others {
+  color: var(--foreground-muted);
+  font-weight: 400;
+  margin-left: 4px;
+}
 .machine-card-header h3 {
   font-size: 14px;
   font-weight: 600;

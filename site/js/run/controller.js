@@ -1518,6 +1518,11 @@ function wireHubHandlers() {
           token: state.hfSession.accessToken,
           machineSlug: first.machine?.slug || 'unknown',
           browser: first.browser || 'unknown-browser',
+          submittedBy: state.hfSession.userName ? {
+            name: state.hfSession.userName,
+            hubId: state.hfSession.hubId || null,
+            avatarUrl: state.hfSession.avatarUrl || null,
+          } : null,
         });
         const link = res.commitUrl
           || `https://huggingface.co/datasets/${HF_DATASET_REPO}/blob/main/${res.path}`;
