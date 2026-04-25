@@ -8,7 +8,7 @@
   <title>Run — WebGPU Bench</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
   <!-- Import map so `@huggingface/hub` resolves in the browser via esm.sh.
        Must appear before any <script type="module">. -->
@@ -30,7 +30,7 @@
       <nav class="header-nav" aria-label="Primary">
         <a href="index.html" class="header-link">Dashboard</a>
         <a href="methodology.html" class="header-link">Methodology</a>
-        <button id="theme-toggle" class="header-link theme-toggle-btn" type="button" title="Toggle theme">
+        <button id="theme-toggle" class="header-link theme-toggle-btn" type="button" title="Toggle theme" aria-label="Toggle dark mode">
           <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
           <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         </button>
@@ -113,6 +113,13 @@
         <!-- Hide filters, iterations, actions -->
         <div class="filter-bar run-controls">
           <div class="filter-bar-inner run-filters">
+            <div class="filter-group filter-group--search">
+              <label class="filter-label" for="family-search">Search</label>
+              <div class="run-search-wrapper">
+                <svg class="run-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="search" id="family-search" class="run-search-input" placeholder="Filter models…" autocomplete="off" spellcheck="false">
+              </div>
+            </div>
             <div class="filter-group">
               <span class="filter-label">Hide</span>
               <div class="run-filters-checks">
@@ -136,10 +143,26 @@
           </div>
         </div>
 
-        <!-- Sticky action bar: always-reachable Download/Run -->
+        <!-- Family / variant list -->
+        <div id="run-models" class="run-models-stack">
+          <div class="empty-state">Loading models…</div>
+        </div>
+
+        <!-- Action bar: lives just above Progress so the Run/Abort/Download
+             controls are co-located with the live status they affect. -->
         <div class="run-action-bar">
           <div class="run-action-bar-inner">
-            <span id="queue-status" class="run-queue-status"></span>
+            <div class="run-budget" id="run-budget" hidden>
+              <div class="run-budget-row">
+                <span class="run-budget-label">Selected</span>
+                <span class="run-budget-text" id="run-budget-text">—</span>
+              </div>
+              <div class="run-budget-bar" role="progressbar" aria-labelledby="run-budget-text">
+                <div class="run-budget-bar-fill" id="run-budget-fill"></div>
+              </div>
+              <div class="run-budget-meta" id="run-budget-meta"></div>
+            </div>
+            <span id="queue-status" class="run-queue-status" hidden></span>
             <div class="run-actions">
               <button class="btn btn-secondary" id="btn-download" type="button" disabled>Download selected</button>
               <button class="btn btn-primary" id="btn-run" type="button" disabled>Run benchmarks</button>
@@ -147,11 +170,6 @@
               <button class="btn btn-secondary" id="btn-purge" type="button" hidden>Purge OPFS cache</button>
             </div>
           </div>
-        </div>
-
-        <!-- Family / variant list -->
-        <div id="run-models" class="run-models-stack">
-          <div class="empty-state">Loading models…</div>
         </div>
 
         <!-- Progress -->

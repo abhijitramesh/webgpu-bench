@@ -8,7 +8,7 @@
   <title>WebGPU Bench</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
@@ -22,7 +22,7 @@
       <nav class="header-nav" aria-label="Primary">
         <a href="run.html" class="header-link">Run</a>
         <a href="methodology.html" class="header-link">Methodology</a>
-        <button id="theme-toggle" class="header-link theme-toggle-btn" type="button" title="Toggle theme">
+        <button id="theme-toggle" class="header-link theme-toggle-btn" type="button" title="Toggle theme" aria-label="Toggle dark mode">
           <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
           <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         </button>
@@ -51,14 +51,26 @@
       <section class="hero">
         <div class="container hero-inner">
           <div class="hero-copy">
+            <span class="hero-eyebrow" id="hero-live" hidden>
+              <span class="hero-eyebrow-dot" aria-hidden="true"></span>
+              <span id="hero-live-text">Live</span>
+            </span>
             <h1 class="hero-title">WebGPU Bench</h1>
             <p class="hero-lede">Real-browser benchmarks for <code>llama.cpp</code>'s WebGPU backend. GGUF models loaded via WebAssembly, measured across Chrome and Safari.</p>
             <p class="hero-meta" id="hero-meta" hidden></p>
+            <div class="hero-actions">
+              <a href="run.html" class="btn btn-primary">Run on your machine</a>
+              <a href="methodology.html" class="btn btn-secondary">Methodology</a>
+            </div>
           </div>
-          <div class="hero-actions">
-            <a href="run.html" class="btn btn-primary">Run on your machine</a>
-            <a href="methodology.html" class="btn btn-secondary">Methodology</a>
-          </div>
+          <aside class="hero-stat" id="hero-stat" aria-live="polite" hidden>
+            <span class="hero-stat-label">Top decode</span>
+            <span class="hero-stat-value">
+              <span class="hero-stat-num" id="hero-top-decode" data-target="0">0.0</span>
+              <span class="hero-stat-unit">tok/s</span>
+            </span>
+            <span class="hero-stat-meta" id="hero-top-meta">—</span>
+          </aside>
         </div>
       </section>
 
@@ -127,8 +139,8 @@
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
               </div>
               <div class="stat-card-content">
-                <span class="stat-card-label">Machines Tested</span>
-                <span class="stat-card-value" id="stat-machines">0</span>
+                <span class="stat-card-label">Machines</span>
+                <span class="stat-card-value" id="stat-machines" data-target="0">0</span>
               </div>
             </div>
             <div class="stat-card">
@@ -137,7 +149,7 @@
               </div>
               <div class="stat-card-content">
                 <span class="stat-card-label">Benchmarks</span>
-                <span class="stat-card-value" id="stat-benchmarks">0</span>
+                <span class="stat-card-value" id="stat-benchmarks" data-target="0">0</span>
               </div>
             </div>
             <div class="stat-card">
@@ -146,7 +158,25 @@
               </div>
               <div class="stat-card-content">
                 <span class="stat-card-label">Pass Rate</span>
-                <span class="stat-card-value" id="stat-pass-rate">0%</span>
+                <span class="stat-card-value"><span id="stat-pass-rate" data-target="0">0</span><span class="stat-card-unit">%</span></span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-card-icon stat-card-icon--decode">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>
+              </div>
+              <div class="stat-card-content">
+                <span class="stat-card-label">Best Decode</span>
+                <span class="stat-card-value"><span id="stat-best-decode" data-target="0">0.0</span><span class="stat-card-unit">tok/s</span></span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-card-icon stat-card-icon--size">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+              </div>
+              <div class="stat-card-content">
+                <span class="stat-card-label">Largest Run</span>
+                <span class="stat-card-value"><span id="stat-largest" data-target="0">0</span><span class="stat-card-unit">MB</span></span>
               </div>
             </div>
           </div>

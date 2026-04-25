@@ -299,11 +299,17 @@ function renderModels() {
     nameLabel.htmlFor = selectAllId;
     nameLabel.textContent = family;
 
+    const paramChip = document.createElement('span');
+    paramChip.className = 'run-family-params';
+    const params = parseParamSize(family);
+    if (params) paramChip.textContent = params;
+    else paramChip.hidden = true;
+
     const stats = document.createElement('span');
     stats.className = 'run-family-stats';
     stats.textContent = `${variants.length} variants · ${fitsCount} fit · ${quickFitCount} quick`;
 
-    header.append(toggleBtn, selectAll, nameLabel, stats);
+    header.append(toggleBtn, selectAll, nameLabel, paramChip, stats);
 
     if (/^granite-4/i.test(family)) {
       const w = document.createElement('span');
@@ -362,7 +368,12 @@ function updateFamilySelectAllState(family) {
     `.run-family[data-family="${cssEscape(family)}"]`,
   );
   if (!familyEl) return;
-  const rows = familyEl.querySelectorAll('.run-variant-select');
+  // Only count fit variants — the parent checkbox is intentionally limited
+  // to toggling fits (non-fits would OOM). If we counted non-fits here too,
+  // the parent could never reach "all checked" for any mixed family, which
+  // wedges its underlying `checked` at false and turns subsequent clicks
+  // into no-ops (see SmolLM3-3B: 21 fit / 24 variants).
+  const rows = familyEl.querySelectorAll('.run-variant-row:not(.is-non-fit) .run-variant-select');
   const all = rows.length;
   const checked = [...rows].filter(cb => cb.checked).length;
   const selectAll = familyEl.querySelector('.run-family-select-all');
@@ -394,6 +405,18 @@ function makeBadge(text, cls) {
 function formatSize(mb) {
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
   return `${mb.toFixed(0)} MB`;
+}
+
+/* Pull a parameter-count hint (e.g. "1B", "270M", "0.6B") from a family
+   name. Most family names embed this near the end (Llama-3.2-1B-Instruct,
+   gemma-3-270m-it). Returns the LAST `<digits>[Bb|Mm]` token in the name,
+   uppercased. Returns null if no match — chip is then hidden. */
+function parseParamSize(name) {
+  if (!name) return null;
+  const matches = String(name).match(/(\d+\.?\d*)\s*[BbMm](?![A-Za-z])/g);
+  if (!matches?.length) return null;
+  const last = matches[matches.length - 1];
+  return last.toUpperCase().replace(/\s+/g, '');
 }
 
 function escapeText(s) {
@@ -454,6 +477,32 @@ function wireFilters() {
   ['hide-ud', 'hide-iq', 'hide-hifp'].forEach(id => {
     const el = $(id);
     if (el) el.addEventListener('change', applyFilters);
+  });
+}
+
+function wireFamilySearch() {
+  const input = $('family-search');
+  if (!input) return;
+  // Live-filter family cards on input. Match against the lowercased family
+  // name; auto-expand any family that matches a non-empty query so the user
+  // sees the relevant variants without an extra click.
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    document.querySelectorAll('.run-family').forEach(el => {
+      const family = (el.dataset.family || '').toLowerCase();
+      const match = q === '' || family.includes(q);
+      el.hidden = !match;
+      // Expand on match-with-query so variants are visible without a click.
+      if (q !== '' && match) {
+        const list = el.querySelector('.run-variant-list');
+        const toggle = el.querySelector('.run-family-toggle');
+        if (list && toggle) {
+          list.hidden = false;
+          toggle.setAttribute('aria-expanded', 'true');
+          el.classList.add('is-open');
+        }
+      }
+    });
   });
 }
 
@@ -547,21 +596,50 @@ function updateButtons() {
   // workflow.)
   const rn = $('btn-run'); if (rn) rn.disabled = state.running || checked.length === 0;
   const ab = $('btn-abort'); if (ab) { ab.disabled = !state.running; ab.hidden = !state.running; }
-  const status = $('queue-status');
-  if (status) {
-    if (checked.length === 0) {
-      status.textContent = '';
-    } else {
-      const toDownload = checked.filter(v => !isCached(v));
-      const dlMB = toDownload.reduce((a, v) => a + (v.sizeMB || 0), 0);
-      const parts = [
-        `${checked.length} selected`,
-        `${cachedChecked.length} cached`,
-      ];
-      if (dlMB > 0) parts.push(`~${formatSize(dlMB)} to download`);
-      status.textContent = parts.join(' · ');
-    }
+  renderBudgetMeter(checked, cachedChecked);
+}
+
+/* Show selected size as a fill bar against the device's max model size.
+   Three states drive the fill color: under (signal green), nearing (amber
+   ≥ 70%), over (red ≥ 100%). When nothing is selected, hide the whole
+   widget so the action bar isn't dominated by an empty meter. */
+function renderBudgetMeter(checked, cachedChecked) {
+  const widget = $('run-budget');
+  const fill = $('run-budget-fill');
+  const text = $('run-budget-text');
+  const meta = $('run-budget-meta');
+  if (!widget || !fill || !text || !meta) return;
+
+  if (checked.length === 0) {
+    widget.hidden = true;
+    return;
   }
+  widget.hidden = false;
+
+  const totalMB = checked.reduce((a, v) => a + (v.sizeMB || 0), 0);
+  const toDownload = checked.filter(v => !isCached(v));
+  const dlMB = toDownload.reduce((a, v) => a + (v.sizeMB || 0), 0);
+  const budgetMB = state.budget?.budgetMB || 0;
+
+  // Largest single model is what really matters for the device — total is
+  // download size, not peak memory. Show both.
+  const largest = checked.reduce((m, v) => Math.max(m, v.sizeMB || 0), 0);
+  const pct = budgetMB > 0 ? Math.min(100, (largest / budgetMB) * 100) : 0;
+
+  fill.style.width = `${pct}%`;
+  let tone = 'ok';
+  if (budgetMB > 0 && largest > budgetMB) tone = 'over';
+  else if (budgetMB > 0 && largest / budgetMB >= 0.7) tone = 'warn';
+  widget.dataset.tone = tone;
+
+  text.innerHTML = `<strong>${checked.length}</strong> selected · <span class="run-budget-size">${formatSize(totalMB)}</span> total`;
+  const metaParts = [];
+  if (largest > 0 && budgetMB > 0) {
+    metaParts.push(`largest ${formatSize(largest)} / budget ${formatSize(budgetMB)}`);
+  }
+  if (cachedChecked.length > 0) metaParts.push(`${cachedChecked.length} cached`);
+  if (dlMB > 0) metaParts.push(`~${formatSize(dlMB)} to download`);
+  meta.textContent = metaParts.join(' · ');
 }
 
 // ──────────────── progress table ────────────────
@@ -1424,6 +1502,7 @@ export async function mountRunSection() {
   renderModels();
   wireSelectionHandlers();
   wireFilters();
+  wireFamilySearch();
   wireBatchSelect();
   wireIterationsInput();
   wireRunHandlers();

@@ -1,18 +1,27 @@
 import { BROWSER_COLORS, quantSortKey, groupBy, formatTokS } from './utils.js';
 
-// Global Chart.js theme
-Chart.defaults.font.family = "'Manrope', system-ui, -apple-system, sans-serif";
+// Global Chart.js theme — uses the site's font tokens and a calm tooltip
+// silhouette. Colors are pulled from CSS variables at render time so the
+// theme toggle works without rebuilding chart instances.
+Chart.defaults.font.family = "'Bricolage Grotesque', system-ui, -apple-system, sans-serif";
+Chart.defaults.font.size = 12;
 Chart.defaults.color = '#a1a1aa';
+Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
 Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(15, 15, 18, 0.95)';
 Chart.defaults.plugins.tooltip.borderColor = '#27272a';
 Chart.defaults.plugins.tooltip.borderWidth = 1;
 Chart.defaults.plugins.tooltip.cornerRadius = 8;
 Chart.defaults.plugins.tooltip.padding = { top: 8, bottom: 8, left: 12, right: 12 };
-Chart.defaults.plugins.tooltip.titleFont = { weight: '600', size: 13 };
-Chart.defaults.plugins.tooltip.bodyFont = { family: "'JetBrains Mono', monospace", size: 12 };
-Chart.defaults.plugins.legend.labels.boxWidth = 12;
-Chart.defaults.plugins.legend.labels.boxHeight = 12;
+Chart.defaults.plugins.tooltip.titleFont = { weight: '600', size: 12, family: "'Bricolage Grotesque', system-ui, sans-serif" };
+Chart.defaults.plugins.tooltip.bodyFont = { family: "'Geist Mono', 'SF Mono', monospace", size: 12 };
+Chart.defaults.plugins.tooltip.displayColors = true;
+Chart.defaults.plugins.tooltip.boxPadding = 6;
+Chart.defaults.plugins.legend.labels.boxWidth = 8;
+Chart.defaults.plugins.legend.labels.boxHeight = 8;
 Chart.defaults.plugins.legend.labels.padding = 16;
+Chart.defaults.plugins.legend.labels.font = { family: "'Geist Mono', monospace", size: 11 };
+Chart.defaults.elements.bar.borderRadius = 4;
+Chart.defaults.elements.bar.borderSkipped = false;
 
 const chartInstances = new Map();
 
@@ -26,9 +35,10 @@ function destroyChart(id) {
 function themeColors() {
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   return {
-    grid:  dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+    grid:  dark ? 'rgba(255,255,255,0.04)' : 'rgba(15, 23, 42, 0.05)',
     text:  dark ? '#a1a1aa' : '#71717a',
     title: dark ? '#e4e4e7' : '#09090b',
+    signal: dark ? '#22e09a' : '#0fa968',
   };
 }
 

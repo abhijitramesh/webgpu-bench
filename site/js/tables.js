@@ -217,11 +217,15 @@ export function renderMachineInfo(machines) {
   const addYourMachineCard = `
     <a class="machine-card machine-card-add" href="run.html">
       <div class="machine-card-header">
-        <svg class="machine-card-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <svg class="machine-card-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
         <h3>Add your machine</h3>
       </div>
-      <p class="machine-card-add-blurb">Run the benchmark in your browser and contribute results to the leaderboard.</p>
-      <span class="machine-card-add-cta">Open Run page →</span>
+      <p class="machine-card-add-blurb">Run benchmarks directly in your browser. Results post to the leaderboard.</p>
+      <code class="machine-card-add-cmd">npm run bench:quick</code>
+      <span class="machine-card-add-cta">
+        Open Run page
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </span>
     </a>`;
 
   if (machines.length === 0) {
