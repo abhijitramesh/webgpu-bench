@@ -7,6 +7,7 @@ import { localSource, hostedSource, inventoryOpfs, purgeOpfs } from './source.js
 import { getDeviceBudgetMB, variantFits, describeDevice } from './device.js';
 import {
   resumeHFSession, beginHFSignIn, signOutHF, submitResultsToDataset,
+  HF_OAUTH_PENDING_KEY,
 } from './hub.js';
 import { isHubConfigured, HF_DATASET_REPO } from './config.js';
 
@@ -1731,11 +1732,21 @@ function restoreSavedResults() {
   // canonical location is now sessionStorage.
   try { localStorage.removeItem(RESULTS_STORAGE_KEY); } catch { /* noop */ }
 
+  // Only restore when we just round-tripped through HF for sign-in
+  // (beginHFSignIn() sets HF_OAUTH_PENDING_KEY immediately before the
+  // redirect). A plain refresh has no such marker and should land on a
+  // clean progress table — old runs sticking around was the bug.
+  let oauthPending = false;
+  try { oauthPending = !!sessionStorage.getItem(HF_OAUTH_PENDING_KEY); } catch { /* noop */ }
+  if (!oauthPending) {
+    try { sessionStorage.removeItem(RESULTS_STORAGE_KEY); } catch { /* noop */ }
+    return;
+  }
+  // Consume the marker now so the next plain refresh doesn't restore again.
+  try { sessionStorage.removeItem(HF_OAUTH_PENDING_KEY); } catch { /* noop */ }
+
   let saved;
   try {
-    // sessionStorage matches the per-variant write path: results live for
-    // the tab session (so the OAuth redirect round-trip is covered) and
-    // are gone after the user closes the tab.
     const raw = sessionStorage.getItem(RESULTS_STORAGE_KEY);
     if (!raw) return;
     saved = JSON.parse(raw);

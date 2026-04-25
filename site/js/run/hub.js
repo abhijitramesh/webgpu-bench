@@ -32,6 +32,12 @@ import {
 // (different document load) and is shared across tabs on the same origin.
 const TOKEN_STORAGE_KEY = 'webgpu-bench:hfOauth';
 
+// sessionStorage flag set by beginHFSignIn() right before the redirect.
+// The Run controller checks this on mount to decide whether to restore
+// in-flight benchmark results — set means "we're round-tripping through HF,
+// keep the data"; missing means a regular refresh, drop it.
+export const HF_OAUTH_PENDING_KEY = 'webgpu-bench:oauthPending';
+
 // ──────────────── session ────────────────
 
 export async function resumeHFSession() {
@@ -100,6 +106,11 @@ export async function beginHFSignIn() {
     scopes,
     redirectUrl: location.origin + location.pathname,
   });
+  // Mark that we're intentionally leaving the page for the HF OAuth round
+  // trip so the controller knows to restore benchmark results when we land
+  // back here. A plain refresh (no marker) skips restoration so old runs
+  // don't ghost-stick to the progress table.
+  try { sessionStorage.setItem(HF_OAUTH_PENDING_KEY, String(Date.now())); } catch { /* quota / disabled */ }
   location.assign(url);
 }
 
