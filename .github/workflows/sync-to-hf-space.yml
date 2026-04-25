@@ -11,7 +11,6 @@ on:
       - 'build/jspi/**'
       - 'build/asyncify/**'
       - 'spaces/**'
-      - 'scripts/build-site.js'
       - '.github/workflows/sync-to-hf-space.yml'
   workflow_dispatch:
 
@@ -47,30 +46,14 @@ jobs:
         if: env.SKIP != '1'
         run: npm ci || npm install
 
-      - name: Sync HF dataset into data/machines/
-        if: env.SKIP != '1'
-        env:
-          HF_DATASET_REPO: ${{ vars.HF_DATASET_REPO }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          if [ -z "$HF_DATASET_REPO" ]; then
-            echo "HF_DATASET_REPO repo variable not set; using committed data/machines/*.json (if any)"
-          else
-            node scripts/sync-from-dataset.mjs
-          fi
-
-      - name: Build combined.json + mirror models.json into site/
+      - name: Mirror models.json into site/
         if: env.SKIP != '1'
         run: |
-          if [ -d data/machines ] && [ -n "$(ls -A data/machines 2>/dev/null)" ]; then
-            node scripts/build-site.js
-          else
-            # No machine data at all — produce an empty dashboard payload so
-            # the static site doesn't 404 on combined.json.
-            mkdir -p site/data
-            echo '{"meta":{"machines":[],"models":[],"browsers":[],"generatedAt":"'"$(date -u +%FT%TZ)"'"},"results":[]}' > site/data/combined.json
-            cp models.json site/models.json
-          fi
+          # The dashboard now reads benchmark records live from the HF
+          # dataset (no static combined.json baseline), so the only repo→
+          # site copy we still need is models.json — used by the run page
+          # to enumerate quants/variants.
+          cp models.json site/models.json
 
       - name: Stage deploy assets
         if: env.SKIP != '1'

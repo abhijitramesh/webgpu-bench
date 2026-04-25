@@ -12,6 +12,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { getConfig } from './config.js';
 import { startServer, stopServer } from './server.js';
+import { pushResultsToDataset } from './scripts/push-to-dataset.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const config = getConfig();
@@ -513,7 +514,7 @@ async function main() {
     deleteModelCache(variant);
   }
 
-  // Final save
+  // Final save (local cache for retry / inspection).
   const resultsFile = path.join(config.RESULTS_DIR, 'results.json');
   fs.writeFileSync(resultsFile, JSON.stringify(allResults, null, 2));
   console.log(`\nResults saved to ${resultsFile}`);
@@ -525,6 +526,32 @@ async function main() {
     const partial = withConsistency.filter(r => r.consistency.agreement_rate < 1.0).length;
     const noBaseline = allResults.filter(r => r.status === 'done' && !r.consistency).length;
     console.log(`Consistency: ${perfect} perfect (100%), ${partial} partial, ${noBaseline} no baseline`);
+  }
+
+  // Auto-push to the HF dataset — the dashboard reads from there as its
+  // single source of truth. Without HF_TOKEN/HF_DATASET_REPO we leave the
+  // local results.json in place and surface a hint so the dev can push
+  // later via `npm run submit`.
+  if (process.env.HF_TOKEN && process.env.HF_DATASET_REPO) {
+    try {
+      const submittable = allResults.filter(r => r.status === 'done');
+      if (submittable.length > 0) {
+        console.log('\nPushing to HF dataset…');
+        const { uploads } = await pushResultsToDataset({
+          datasetRepo: process.env.HF_DATASET_REPO,
+          token: process.env.HF_TOKEN,
+          records: submittable,
+        });
+        console.log(`Pushed ${uploads} file${uploads === 1 ? '' : 's'} to https://huggingface.co/datasets/${process.env.HF_DATASET_REPO}`);
+      } else {
+        console.log('\nNo successful runs to push.');
+      }
+    } catch (err) {
+      console.warn(`\nPush to HF dataset failed: ${err.message}`);
+      console.warn(`Local results preserved at ${resultsFile}; retry with: npm run submit`);
+    }
+  } else {
+    console.log('\nSkipping HF dataset push (HF_TOKEN/HF_DATASET_REPO not set). Run `npm run submit` to push later.');
   }
 
   await stopServer(server);

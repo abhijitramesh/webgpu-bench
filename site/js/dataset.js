@@ -20,9 +20,12 @@ const HF = 'https://huggingface.co';
 // dedupe out anyway.
 const CLOCK_SKEW_MS = 10 * 60 * 1000;
 
-// Cap on parallel/total file fetches per dashboard load. 50 covers ~weeks
-// of submissions before CI rebuilds; beyond that we silently truncate.
-const MAX_FETCH = 50;
+// Cap on parallel/total file fetches per dashboard load. The dashboard now
+// pulls the entire dataset live (no static baseline), so this cap is the
+// upper bound on how many run files the page will download at once. 1000
+// is conservative — actual bench submissions are typically ≤ 1 KB each so
+// the bandwidth ceiling is well under a megabyte even at the cap.
+const MAX_FETCH = 1000;
 
 /* Fetch the runs/ tree from the dataset. Returns the file entries that
    look newer than `sinceISO` (with a clock-skew buffer applied). On any
@@ -61,12 +64,20 @@ async function fetchRunFile(datasetRepo, filePath) {
   return resp.json();
 }
 
+/* List the dataset tree and download every file in `runs/`. Pure-live
+   variant of fetchRecentRuns — no cutoff, returns the entire dataset.
+   Caller is responsible for rate-limiting/caching. */
+export async function fetchAllRuns(datasetRepo) {
+  return fetchRunsBatch(datasetRepo, await listRecentRunFiles(datasetRepo, null));
+}
+
 /* List the dataset tree and download every file that's newer than the
-   baseline's generatedAt. Returns flattened records ready to append to
-   combined.results, plus the raw machine info per file so the merge can
-   keep meta.machines accurate. */
+   baseline's generatedAt. Kept for callers that still want a delta view. */
 export async function fetchRecentRuns(datasetRepo, sinceISO) {
-  const files = await listRecentRunFiles(datasetRepo, sinceISO);
+  return fetchRunsBatch(datasetRepo, await listRecentRunFiles(datasetRepo, sinceISO));
+}
+
+async function fetchRunsBatch(datasetRepo, files) {
   if (files.length === 0) return { records: [], machines: [], fileCount: 0 };
 
   const records = [];

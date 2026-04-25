@@ -1,57 +1,71 @@
-import { fetchRecentRuns } from './dataset.js';
+import { fetchAllRuns } from './dataset.js';
 import { HF_DATASET_REPO } from './run/config.js';
 
+// In-memory cache for the current page session.
 let cachedData = null;
+// sessionStorage cache so a refresh-within-a-minute doesn't re-fetch the
+// entire dataset. Short TTL — submissions land continuously and the
+// dashboard is the surface where we actually want freshness.
+const SESSION_CACHE_KEY = 'webgpu-bench:dashboard-data';
+const SESSION_CACHE_TTL_MS = 60 * 1000;
 
 export async function loadData() {
   if (cachedData) return cachedData;
 
-  // Static baseline — pre-built by CI from the dataset on the last code push.
-  const baselineResp = await fetch('data/combined.json');
-  const baseline = await baselineResp.json();
-
-  // Live delta — pull recent submissions from the HF dataset that landed
-  // since baseline.meta.generatedAt. Best-effort: a CORS / network / parse
-  // failure here just leaves the dashboard on the static baseline rather
-  // than blocking the whole page.
-  try {
-    const since = baseline.meta?.generatedAt;
-    const { records, machines, fileCount } = await fetchRecentRuns(HF_DATASET_REPO, since);
-    if (fileCount > 0) {
-      mergeLiveDelta(baseline, records, machines);
-    }
-  } catch (err) {
-    console.warn(`Live dataset sync skipped: ${err.message}`);
+  const fromSession = readSessionCache();
+  if (fromSession) {
+    cachedData = fromSession;
+    return cachedData;
   }
 
-  cachedData = baseline;
+  // Single source of truth: the HF dataset repo. No static baseline. A new
+  // dashboard with zero submissions shows an empty state until something is
+  // submitted.
+  const empty = makeEmptyDataset();
+  try {
+    const { records, machines, fileCount } = await fetchAllRuns(HF_DATASET_REPO);
+    if (fileCount > 0) {
+      mergeRecords(empty, records, machines);
+    }
+    cachedData = empty;
+    writeSessionCache(cachedData);
+  } catch (err) {
+    console.warn(`Live dataset load failed: ${err.message}`);
+    cachedData = empty;
+  }
   return cachedData;
 }
 
-/* Append fresh records into the baseline and recompute the meta lookups so
-   the dashboard's filters/charts see them as first-class data. Records that
-   already exist in the baseline (deduped by a composite key) are dropped —
-   if CI ran recently, the static combined.json already contains them. */
-function mergeLiveDelta(baseline, records, machines) {
-  const baselineKeys = new Set(baseline.results.map(keyOf));
-  const fresh = records.filter(r => !baselineKeys.has(keyOf(r)));
-  if (fresh.length === 0) return;
+function makeEmptyDataset() {
+  return {
+    meta: {
+      machines: [],
+      models: [],
+      browsers: [],
+      generatedAt: new Date().toISOString(),
+    },
+    results: [],
+  };
+}
 
-  baseline.results.push(...fresh);
+/* Append records into an empty payload and recompute the meta lookups. Same
+   shape the old combined.json had, so all downstream consumers (charts,
+   tables, machine cards) work unchanged. */
+function mergeRecords(payload, records, machines) {
+  if (records.length === 0) return;
 
-  // meta.models / meta.browsers union.
-  const modelsSet = new Set(baseline.meta.models || []);
-  const browsersSet = new Set(baseline.meta.browsers || []);
-  for (const r of fresh) {
+  payload.results.push(...records);
+
+  const modelsSet = new Set(payload.meta.models || []);
+  const browsersSet = new Set(payload.meta.browsers || []);
+  for (const r of records) {
     if (r.model) modelsSet.add(r.model);
     if (r.browser) browsersSet.add(r.browser);
   }
-  baseline.meta.models = [...modelsSet].sort();
-  baseline.meta.browsers = [...browsersSet].sort();
+  payload.meta.models = [...modelsSet].sort();
+  payload.meta.browsers = [...browsersSet].sort();
 
-  // meta.machines: keep existing entries, add any new slugs from the live
-  // delta, then recompute resultCount/passCount across baseline+fresh.
-  const machineMap = new Map((baseline.meta.machines || []).map(m => [m.slug, m]));
+  const machineMap = new Map((payload.meta.machines || []).map(m => [m.slug, m]));
   for (const m of machines) {
     if (!machineMap.has(m.slug)) machineMap.set(m.slug, { ...m });
   }
@@ -59,12 +73,12 @@ function mergeLiveDelta(baseline, records, machines) {
     m.resultCount = 0;
     m.passCount = 0;
   }
+
   // Per-machine submitter aggregation — counts contributions and tracks the
-  // most recent submission so the dashboard can render a stacked-avatar row
-  // sorted by activity. Mirrors scripts/build-site.js logic so live and
-  // baseline data stay byte-equivalent.
+  // most-recent submission so the machine card can render a stacked-avatar
+  // row sorted by activity.
   const submitterAccumulator = new Map(); // slug → Map(key → {profile, count, latestAt})
-  for (const r of baseline.results) {
+  for (const r of payload.results) {
     const m = machineMap.get(r.machineSlug);
     if (!m) continue;
     m.resultCount += 1;
@@ -92,8 +106,26 @@ function mergeLiveDelta(baseline, records, machines) {
       .map(({ profile, count, latestAt }) => ({ ...profile, count, latestAt }))
       .sort((a, b) => b.count - a.count || (b.latestAt || '').localeCompare(a.latestAt || ''));
   }
-  baseline.meta.machines = [...machineMap.values()];
-  baseline.meta.generatedAt = new Date().toISOString();
+  payload.meta.machines = [...machineMap.values()];
+  payload.meta.generatedAt = new Date().toISOString();
+}
+
+function readSessionCache() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
+    if (!raw) return null;
+    const { ts, data } = JSON.parse(raw);
+    if (typeof ts !== 'number' || (Date.now() - ts) > SESSION_CACHE_TTL_MS) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionCache(data) {
+  try {
+    sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+  } catch { /* quota or disabled */ }
 }
 
 /* Reduce a flat result set down to one canonical row per
@@ -121,13 +153,6 @@ export function selectBestResults(records) {
     }
   }
   return [...bestByCell.values()];
-}
-
-/* Composite key for dedupe. The submit pipeline writes one record per
-   (machine, browser, model, variant, timestamp) tuple, so this is unique
-   in practice. */
-function keyOf(r) {
-  return `${r.machineSlug}|${r.browser}|${r.model}|${r.variant}|${r.timestamp}`;
 }
 
 export function filterResults(results, filters) {
