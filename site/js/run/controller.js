@@ -7,7 +7,6 @@ import { localSource, hostedSource, inventoryOpfs, purgeOpfs } from './source.js
 import { getDeviceBudgetMB, variantFits, describeDevice } from './device.js';
 import {
   resumeHFSession, beginHFSignIn, signOutHF, submitResultsToDataset,
-  HF_TOKEN_STORAGE_KEY, HF_POPUP_DONE_MESSAGE, isHFPopupCallback,
 } from './hub.js';
 import { isHubConfigured, HF_DATASET_REPO } from './config.js';
 
@@ -241,13 +240,17 @@ function renderHfSection() {
 
   if (state.hfSession) {
     signinBtn.textContent = 'Sign out';
-    signinBtn.disabled = false;
+    // Sign-out itself is fine mid-run, but stay consistent with the disabled
+    // sign-in state so the row doesn't toggle look mid-run.
+    signinBtn.disabled = state.running;
     submitBtn.hidden = false;
     const eligible = submittableResults();
-    submitBtn.disabled = eligible.length === 0;
-    submitBtn.title = eligible.length === 0 && state.results.length > 0
-      ? `Need at least ${MIN_ITERATIONS_FOR_SUBMIT} successful iterations per variant to submit`
-      : '';
+    submitBtn.disabled = state.running || eligible.length === 0;
+    submitBtn.title = state.running
+      ? 'Wait for the benchmark to finish before submitting'
+      : (eligible.length === 0 && state.results.length > 0
+        ? `Need at least ${MIN_ITERATIONS_FOR_SUBMIT} successful iterations per variant to submit`
+        : '');
     const who = state.hfSession.userName ? `@${state.hfSession.userName}` : 'signed in';
     const hint = eligible.length > 0
       ? ` · ${eligible.length}/${state.results.length} variants eligible`
@@ -255,7 +258,15 @@ function renderHfSection() {
     userEl.textContent = `${who} · → ${HF_DATASET_REPO}${hint}`;
   } else {
     signinBtn.textContent = 'Sign in with Hugging Face';
-    signinBtn.disabled = false;
+    // Sign-in triggers a full-page redirect, which would kill an in-flight
+    // worker. Disable the button while the benchmark is running so the user
+    // can't accidentally lose their run; results are saved progressively to
+    // localStorage and restored on the next mount, so finishing the run and
+    // signing in afterwards still lets them submit.
+    signinBtn.disabled = state.running;
+    signinBtn.title = state.running
+      ? 'Wait for the benchmark to finish before signing in'
+      : '';
     submitBtn.hidden = true;
     userEl.textContent = '';
   }
@@ -598,6 +609,9 @@ function updateButtons() {
   const rn = $('btn-run'); if (rn) rn.disabled = state.running || checked.length === 0;
   const ab = $('btn-abort'); if (ab) { ab.disabled = !state.running; ab.hidden = !state.running; }
   renderBudgetMeter(checked, cachedChecked);
+  // Keep the Sign in / Submit buttons in sync with the running flag — they
+  // depend on it so the user can't kick off a redirect mid-run.
+  renderHfSection();
 }
 
 /* Show selected size as a fill bar against the device's max model size.
@@ -1485,35 +1499,14 @@ function wirePurgeHandler() {
   });
 }
 
-async function refreshHfSessionFromStorage() {
-  try {
-    state.hfSession = await resumeHFSession();
-  } catch {
-    state.hfSession = null;
-  }
-  renderHfSection();
-}
-
-function wireCrossTabHubSync() {
-  // Popup writes the token to localStorage and posts a message to opener.
-  // We listen to both: postMessage is the fast path; the storage event also
-  // fires for any other open tab on the same origin so they all stay in sync.
-  window.addEventListener('storage', (e) => {
-    if (e.key !== HF_TOKEN_STORAGE_KEY) return;
-    refreshHfSessionFromStorage();
-  });
-  window.addEventListener('message', (e) => {
-    if (e.origin !== location.origin) return;
-    if (e.data?.type !== HF_POPUP_DONE_MESSAGE) return;
-    refreshHfSessionFromStorage();
-  });
-}
-
 function wireHubHandlers() {
   const signinBtn = $('btn-signin');
   const submitBtn = $('btn-submit');
   if (signinBtn) {
     signinBtn.addEventListener('click', async () => {
+      // Sign in / Sign out is disabled while a run is in flight; this guard
+      // catches a stale-event-during-state-change race and keeps results safe.
+      if (state.running) return;
       try {
         if (state.hfSession) {
           signOutHF();
@@ -1521,20 +1514,8 @@ function wireHubHandlers() {
           renderHfSection();
           return;
         }
-        // Popup keeps any in-flight benchmark + accumulated results alive on
-        // this tab. Fall back to a full-page redirect only if the popup is
-        // blocked by the browser.
-        try {
-          await beginHFSignIn({ popup: true });
-          logLine('Opened HF sign-in in a new tab — finish there and come back.');
-        } catch (err) {
-          if (err.code === 'popup-blocked') {
-            logLine('Popup blocked — falling back to full-page sign-in. Your in-progress run will be lost.');
-            await beginHFSignIn({ popup: false });
-          } else {
-            throw err;
-          }
-        }
+        await beginHFSignIn();
+        // beginHFSignIn redirects — unreachable after.
       } catch (err) {
         logLine(`Sign-in failed: ${err.message}`);
       }
@@ -1584,43 +1565,6 @@ function wireRunHandlers() {
 
 export async function mountRunSection() {
   if (state.mounted) return;
-
-  // OAuth popup fast-path: when this page is loaded inside the sign-in
-  // popup, the URL carries `code`+`state` from HF. We can't rely on
-  // `window.opener` alone because HF's OAuth response sets COOP, which
-  // severs the opener reference in Chrome/Safari. `isHFPopupCallback()`
-  // also checks the localStorage marker the opener writes pre-popup.
-  if (typeof window !== 'undefined') {
-    const params = new URLSearchParams(location.search);
-    if (params.get('code') && params.get('state') && isHFPopupCallback()) {
-      document.body.innerHTML = `
-        <div style="padding:48px 32px;font-family:system-ui,sans-serif;color:#222;max-width:480px;margin:0 auto;text-align:center">
-          <div id="hf-popup-status" style="font-size:15px;line-height:1.5">Completing sign-in…</div>
-          <button id="hf-popup-close" type="button" hidden
-            style="margin-top:24px;padding:8px 16px;font:inherit;border:1px solid #ccc;border-radius:6px;background:#f6f6f6;cursor:pointer">
-            Close this tab
-          </button>
-        </div>
-      `;
-      // Restore visibility — the inline guard in run.html hid <html> to avoid
-      // a bench-skeleton flash; we own the body now and want our message visible.
-      document.documentElement.style.visibility = '';
-      try { await resumeHFSession(); } catch { /* logged inside */ }
-      // resumeHFSession already calls window.close(); if the browser denies
-      // it (Firefox is strict; some COOP cases too), surface a clear message
-      // and a manual close button. The parent tab already updated via the
-      // storage event triggered by the token write.
-      const status = document.getElementById('hf-popup-status');
-      const closeBtn = document.getElementById('hf-popup-close');
-      if (status) status.textContent = 'Signed in. You can close this tab.';
-      if (closeBtn) {
-        closeBtn.hidden = false;
-        closeBtn.addEventListener('click', () => { try { window.close(); } catch {} });
-      }
-      return;
-    }
-  }
-
   state.mounted = true;
 
   state.surface = await detectSurface();
@@ -1663,12 +1607,35 @@ export async function mountRunSection() {
   wireAbortHandler();
   wirePurgeHandler();
   wireHubHandlers();
-  wireCrossTabHubSync();
   wireOutputHandlers();
+  // Restore the last completed run from localStorage so it survives a page
+  // reload — including the OAuth redirect taking the user to HF and back.
+  // Must run before updateButtons/renderOutput/hideProgress so they pick up
+  // the rehydrated state.results.
+  restoreSavedResults();
   updateButtons();
   renderOutput();
-  hideProgressUntilFirstRow();
+  if (state.results.length === 0) hideProgressUntilFirstRow();
   maybeShowCrashBanner();
+}
+
+const RESULTS_STORAGE_KEY = 'webgpu-bench:lastRun';
+
+function restoreSavedResults() {
+  let saved;
+  try {
+    const raw = localStorage.getItem(RESULTS_STORAGE_KEY);
+    if (!raw) return;
+    saved = JSON.parse(raw);
+  } catch { return; }
+  if (!Array.isArray(saved) || saved.length === 0) return;
+
+  state.results = saved;
+  for (const record of saved) {
+    const v = state.variants.find(x => x.repo === record.repo && x.filename === record.filename);
+    if (!v) continue;
+    progressRowFor(v).fillFromRecord(record);
+  }
 }
 
 export function teardownRunSection() {

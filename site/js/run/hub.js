@@ -4,11 +4,13 @@
 //   1. On page load, the run controller calls `resumeHFSession()` to handle
 //      the OAuth redirect (if the URL has the expected query params) and to
 //      reuse any previously-stored access token.
-//   2. Clicking [Sign in] calls `beginHFSignIn({ popup: true })` which opens
-//      HF in a new window. After consent, HF redirects the popup back here;
-//      the popup completes the exchange, persists the token to localStorage,
-//      pings the opener via postMessage, and closes itself. The original
-//      tab keeps any in-flight benchmark + accumulated results intact.
+//   2. Clicking [Sign in] calls `beginHFSignIn()` which redirects the
+//      browser to HF; after consent, HF redirects back to the page with
+//      the OAuth response encoded in the URL. The next page load calls
+//      `resumeHFSession()` again, completes the exchange, and stores the
+//      token in localStorage. The Run controller restores any previously
+//      saved benchmark results from localStorage so they survive the
+//      OAuth round-trip.
 //   3. Clicking [Submit] calls `submitResultsToDataset()` which commits a
 //      JSON file (one per machine-slug / browser / session) as a PR to the
 //      leaderboard dataset.
@@ -26,34 +28,9 @@ import {
   isHubConfigured,
 } from './config.js';
 
-// localStorage (not sessionStorage) so the popup and the original tab share
-// the same token namespace, and a `storage` event fires in the opener when
-// the popup completes sign-in.
-export const HF_TOKEN_STORAGE_KEY = 'webgpu-bench:hfOauth';
-export const HF_POPUP_DONE_MESSAGE = 'webgpu-bench:hf-signed-in';
-// Marker written by the opener tab right before window.open(). The popup
-// reads it on callback to know it's running inside a popup — `window.opener`
-// is unreliable because HF's OAuth page sets a COOP header that severs the
-// opener relationship in Chrome/Safari. Marker is cleared after callback.
-const HF_POPUP_PENDING_KEY = 'webgpu-bench:hfPopupPending';
-const HF_POPUP_PENDING_TTL_MS = 10 * 60 * 1000;
-
-export function isHFPopupCallback() {
-  if (typeof window === 'undefined') return false;
-  if (window.opener && window.opener !== window) return true;
-  try {
-    const raw = localStorage.getItem(HF_POPUP_PENDING_KEY);
-    if (!raw) return false;
-    const data = JSON.parse(raw);
-    if (!data?.ts || (Date.now() - data.ts) > HF_POPUP_PENDING_TTL_MS) {
-      localStorage.removeItem(HF_POPUP_PENDING_KEY);
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
+// localStorage (not sessionStorage) so the token survives the OAuth redirect
+// (different document load) and is shared across tabs on the same origin.
+const TOKEN_STORAGE_KEY = 'webgpu-bench:hfOauth';
 
 // ──────────────── session ────────────────
 
@@ -64,30 +41,18 @@ export async function resumeHFSession() {
   try {
     const res = await oauthHandleRedirectIfPresent();
     if (res) {
-      const session = {
+      localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify({
         accessToken: res.accessToken,
         expiresAt: res.accessTokenExpiresAt,
         userName: res.userInfo?.preferred_username || res.userInfo?.name || null,
         avatarUrl: res.userInfo?.picture || null,
         hubId: res.userInfo?.sub || null,
-      };
-      localStorage.setItem(HF_TOKEN_STORAGE_KEY, JSON.stringify(session));
+      }));
       // Clean up the OAuth query params so a reload doesn't retry.
       const url = new URL(location.href);
       for (const k of ['code', 'state']) url.searchParams.delete(k);
       history.replaceState({}, '', url.toString());
-      // Popup hand-off: tell the opener tab (if accessible) and close. The
-      // opener also gets a `storage` event from the localStorage write —
-      // postMessage is the fast path; storage event is the safety net for
-      // when COOP severs window.opener.
-      if (isHFPopupCallback()) {
-        localStorage.removeItem(HF_POPUP_PENDING_KEY);
-        if (window.opener && window.opener !== window && !window.opener.closed) {
-          try { window.opener.postMessage({ type: HF_POPUP_DONE_MESSAGE }, location.origin); } catch { /* opener gone */ }
-        }
-        try { window.close(); } catch { /* not script-opened */ }
-      }
-      return session;
+      return readStoredSession();
     }
   } catch (err) {
     console.warn('OAuth redirect handling failed:', err.message);
@@ -98,12 +63,12 @@ export async function resumeHFSession() {
 
 function readStoredSession() {
   try {
-    const raw = localStorage.getItem(HF_TOKEN_STORAGE_KEY);
+    const raw = localStorage.getItem(TOKEN_STORAGE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
     if (!data.accessToken) return null;
     if (data.expiresAt && new Date(data.expiresAt).getTime() < Date.now()) {
-      localStorage.removeItem(HF_TOKEN_STORAGE_KEY);
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
       return null;
     }
     return data;
@@ -112,7 +77,7 @@ function readStoredSession() {
   }
 }
 
-export async function beginHFSignIn({ popup = false } = {}) {
+export async function beginHFSignIn() {
   if (!isHubConfigured()) {
     throw new Error('HF hub is not configured. Set HF_DATASET_REPO in run/config.js.');
   }
@@ -135,27 +100,11 @@ export async function beginHFSignIn({ popup = false } = {}) {
     scopes,
     redirectUrl: location.origin + location.pathname,
   });
-  if (popup) {
-    // Set marker BEFORE window.open so the popup callback can detect popup
-    // mode even when COOP nullifies window.opener.
-    try {
-      localStorage.setItem(HF_POPUP_PENDING_KEY, JSON.stringify({ ts: Date.now() }));
-    } catch { /* quota / disabled — best effort */ }
-    const win = window.open(url, 'hf-oauth', 'popup=yes,width=520,height=720');
-    if (!win) {
-      try { localStorage.removeItem(HF_POPUP_PENDING_KEY); } catch { /* noop */ }
-      const err = new Error('Popup blocked — allow popups for this site, or use full-page sign-in.');
-      err.code = 'popup-blocked';
-      throw err;
-    }
-    return { popup: win };
-  }
   location.assign(url);
-  return null;
 }
 
 export function signOutHF() {
-  localStorage.removeItem(HF_TOKEN_STORAGE_KEY);
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
 export async function fetchWhoAmI(token) {
