@@ -7,6 +7,7 @@ import { localSource, hostedSource, inventoryOpfs, purgeOpfs } from './source.js
 import { getDeviceBudgetMB, variantFits, describeDevice } from './device.js';
 import {
   resumeHFSession, beginHFSignIn, signOutHF, submitResultsToDataset,
+  HF_TOKEN_STORAGE_KEY, HF_POPUP_DONE_MESSAGE,
 } from './hub.js';
 import { isHubConfigured, HF_DATASET_REPO } from './config.js';
 
@@ -1484,6 +1485,30 @@ function wirePurgeHandler() {
   });
 }
 
+async function refreshHfSessionFromStorage() {
+  try {
+    state.hfSession = await resumeHFSession();
+  } catch {
+    state.hfSession = null;
+  }
+  renderHfSection();
+}
+
+function wireCrossTabHubSync() {
+  // Popup writes the token to localStorage and posts a message to opener.
+  // We listen to both: postMessage is the fast path; the storage event also
+  // fires for any other open tab on the same origin so they all stay in sync.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== HF_TOKEN_STORAGE_KEY) return;
+    refreshHfSessionFromStorage();
+  });
+  window.addEventListener('message', (e) => {
+    if (e.origin !== location.origin) return;
+    if (e.data?.type !== HF_POPUP_DONE_MESSAGE) return;
+    refreshHfSessionFromStorage();
+  });
+}
+
 function wireHubHandlers() {
   const signinBtn = $('btn-signin');
   const submitBtn = $('btn-submit');
@@ -1496,8 +1521,20 @@ function wireHubHandlers() {
           renderHfSection();
           return;
         }
-        await beginHFSignIn();
-        // beginHFSignIn redirects — unreachable after.
+        // Popup keeps any in-flight benchmark + accumulated results alive on
+        // this tab. Fall back to a full-page redirect only if the popup is
+        // blocked by the browser.
+        try {
+          await beginHFSignIn({ popup: true });
+          logLine('Opened HF sign-in in a new tab — finish there and come back.');
+        } catch (err) {
+          if (err.code === 'popup-blocked') {
+            logLine('Popup blocked — falling back to full-page sign-in. Your in-progress run will be lost.');
+            await beginHFSignIn({ popup: false });
+          } else {
+            throw err;
+          }
+        }
       } catch (err) {
         logLine(`Sign-in failed: ${err.message}`);
       }
@@ -1547,6 +1584,24 @@ function wireRunHandlers() {
 
 export async function mountRunSection() {
   if (state.mounted) return;
+
+  // OAuth popup fast-path: when this page is loaded inside the sign-in
+  // popup, the URL carries `code`+`state` from HF and `window.opener` is
+  // the original tab. Complete the handshake (which posts to the opener
+  // and closes this window) instead of mounting the full Run UI.
+  if (typeof window !== 'undefined' && window.opener
+      && window.opener !== window) {
+    const params = new URLSearchParams(location.search);
+    if (params.get('code') && params.get('state')) {
+      document.body.innerHTML =
+        '<div style="padding:32px;font-family:system-ui,sans-serif;font-size:14px;color:#444">'
+        + 'Signing in… you can close this tab if it doesn\'t close automatically.'
+        + '</div>';
+      try { await resumeHFSession(); } catch { /* logged inside */ }
+      return;
+    }
+  }
+
   state.mounted = true;
 
   state.surface = await detectSurface();
@@ -1589,6 +1644,7 @@ export async function mountRunSection() {
   wireAbortHandler();
   wirePurgeHandler();
   wireHubHandlers();
+  wireCrossTabHubSync();
   wireOutputHandlers();
   updateButtons();
   renderOutput();
