@@ -935,7 +935,10 @@ async function onRunClick() {
     clearRunIntent();
 
     try {
-      localStorage.setItem('webgpu-bench:lastRun', JSON.stringify(state.results));
+      // sessionStorage so results survive in-tab navigations (the OAuth
+      // sign-in redirect in particular) but reset when the user actually
+      // closes the tab — they don't want stale results on a fresh visit.
+      sessionStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify(state.results));
     } catch { /* quota */ }
 
     if (state.surface === 'localhost' && $('save-local')?.checked) {
@@ -1625,9 +1628,17 @@ export async function mountRunSection() {
 const RESULTS_STORAGE_KEY = 'webgpu-bench:lastRun';
 
 function restoreSavedResults() {
+  // Clean up the pre-migration localStorage entry — earlier builds wrote
+  // results there, which made them persist across full tab closes. The
+  // canonical location is now sessionStorage.
+  try { localStorage.removeItem(RESULTS_STORAGE_KEY); } catch { /* noop */ }
+
   let saved;
   try {
-    const raw = localStorage.getItem(RESULTS_STORAGE_KEY);
+    // sessionStorage matches the per-variant write path: results live for
+    // the tab session (so the OAuth redirect round-trip is covered) and
+    // are gone after the user closes the tab.
+    const raw = sessionStorage.getItem(RESULTS_STORAGE_KEY);
     if (!raw) return;
     saved = JSON.parse(raw);
   } catch { return; }
