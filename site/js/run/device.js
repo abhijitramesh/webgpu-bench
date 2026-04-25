@@ -146,11 +146,37 @@ export async function describeDevice() {
       gpu = null;
     }
   }
+
+  // UA Client Hints: high-entropy values give us the real architecture
+  // and OS, neither of which `navigator.platform` reports correctly on
+  // Apple Silicon Macs (it returns "MacIntel" forever for back-compat).
+  let uaArch = null;
+  let uaPlatform = null;
+  let uaPlatformVersion = null;
+  try {
+    const uad = navigator.userAgentData;
+    if (uad?.getHighEntropyValues) {
+      const hev = await uad.getHighEntropyValues(['architecture', 'platform', 'platformVersion']);
+      uaArch = hev.architecture || null;
+      uaPlatform = hev.platform || null;
+      uaPlatformVersion = hev.platformVersion || null;
+    }
+  } catch { /* not Chromium or denied */ }
+
+  // UA-CH brands give us a clean { brand, version } pair without parsing
+  // the userAgent string. Filter out the "Not(A:Brand)" decoy entries.
+  const brands = (navigator.userAgentData?.brands || [])
+    .filter(b => b && !/not[^\w]*a[^\w]*brand/i.test(b.brand));
+
   return {
     ...budget,
     webgpu: !!navigator.gpu,
     gpu,
     userAgent: navigator.userAgent,
     platform: navigator.platform ?? null,
+    uaArch,
+    uaPlatform,
+    uaPlatformVersion,
+    uaBrands: brands,
   };
 }

@@ -164,6 +164,54 @@ function groupByFamily(variants) {
 
 function $(id) { return document.getElementById(id); }
 
+/* Pretty browser name + version. Prefers UA Client Hints (clean
+   { brand, version } pairs) over UA-string regex parsing. The brand list
+   is ordered Chromium-favoured, so pick the most-specific brand the user
+   actually has (Edg → Chrome → Chromium). */
+function formatBrowser(d) {
+  const preferred = ['Microsoft Edge', 'Edg', 'Opera', 'Brave', 'Arc', 'Vivaldi',
+                     'Google Chrome', 'Chromium'];
+  const brands = d.uaBrands || [];
+  for (const name of preferred) {
+    const hit = brands.find(b => b.brand === name);
+    if (hit) return `${hit.brand} ${hit.version}`;
+  }
+  if (brands.length > 0) return `${brands[0].brand} ${brands[0].version}`;
+
+  // Non-Chromium fallback: regex on userAgent. Capture brand + version
+  // separately so the slash isn't visible.
+  const m = (d.userAgent || '').match(/(Firefox|FxiOS|Edg|CriOS|Chrome|Version)\/([\d.]+)/);
+  if (!m) return 'browser';
+  const brand = m[1] === 'Version' ? 'Safari' : (m[1] === 'CriOS' ? 'Chrome iOS' : (m[1] === 'FxiOS' ? 'Firefox iOS' : m[1]));
+  return `${brand} ${m[2]}`;
+}
+
+/* Pretty OS + architecture. `navigator.platform` is unreliable on Apple
+   Silicon (it returns "MacIntel" for back-compat); prefer UA-CH and fall
+   back to the WebGPU vendor as a strong arm64 signal on Macs. */
+function formatPlatform(d) {
+  const ua = d.userAgent || '';
+  const platHint = (d.uaPlatform || d.platform || '').toLowerCase();
+  let os;
+  if (platHint.includes('mac') || /Mac/.test(ua)) os = 'macOS';
+  else if (platHint.includes('win') || /Win/.test(ua)) os = 'Windows';
+  else if (/iPhone|iPad|iPod/.test(ua) || platHint.includes('ios')) os = 'iOS';
+  else if (/Android/.test(ua) || platHint.includes('android')) os = 'Android';
+  else if (platHint.includes('linux') || /Linux/.test(ua)) os = 'Linux';
+  else os = d.uaPlatform || d.platform || 'unknown';
+
+  let arch = '';
+  if (d.uaArch === 'arm') arch = 'arm64';
+  else if (d.uaArch === 'x86') arch = 'x86_64';
+  else if (d.uaArch) arch = d.uaArch;
+  else if (os === 'macOS' && d.gpu?.vendor === 'apple') arch = 'arm64';
+  else if (os === 'iOS') arch = 'arm64';
+  else if (/arm|aarch/i.test(ua)) arch = 'arm64';
+  else if (/x86_64|Win64;|x64/i.test(ua)) arch = 'x86_64';
+
+  return arch ? `${os} · ${arch}` : os;
+}
+
 function renderHeader() {
   const d = state.device;
   const b = state.budget;
@@ -180,13 +228,14 @@ function renderHeader() {
     badge.className = `badge run-mode-badge run-mode-${state.surface}`;
   }
 
-  const uaShort = d.userAgent.match(/(Firefox|Chrome|CriOS|Edg|Safari)\/[\d.]+/)?.[0] || 'browser';
+  const browserStr = formatBrowser(d);
+  const platformStr = formatPlatform(d);
   const gpuStr = d.gpu
     ? [d.gpu.vendor, d.gpu.architecture, d.gpu.device].filter(Boolean).join(' ').trim()
     : '';
 
-  $('device-browser').textContent = uaShort;
-  $('device-platform').textContent = d.platform || 'unknown';
+  $('device-browser').textContent = browserStr;
+  $('device-platform').textContent = platformStr;
   $('device-gpu').textContent = gpuStr || (d.webgpu ? 'WebGPU (no info)' : 'no WebGPU');
 
   const memStr = b.memGB !== null ? `${b.memGB} GB` : '—';
