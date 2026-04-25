@@ -153,19 +153,29 @@ export async function describeDevice() {
   let uaArch = null;
   let uaPlatform = null;
   let uaPlatformVersion = null;
+  // `fullVersionList` is the high-entropy version of `brands` and gives
+  // us the full dotted version (e.g. "147.0.7390.107") instead of just
+  // the major. The default `brands` is major-only.
+  let fullVersionList = null;
   try {
     const uad = navigator.userAgentData;
     if (uad?.getHighEntropyValues) {
-      const hev = await uad.getHighEntropyValues(['architecture', 'platform', 'platformVersion']);
+      const hev = await uad.getHighEntropyValues([
+        'architecture', 'platform', 'platformVersion', 'fullVersionList',
+      ]);
       uaArch = hev.architecture || null;
       uaPlatform = hev.platform || null;
       uaPlatformVersion = hev.platformVersion || null;
+      fullVersionList = hev.fullVersionList || null;
     }
   } catch { /* not Chromium or denied */ }
 
   // UA-CH brands give us a clean { brand, version } pair without parsing
   // the userAgent string. Filter out the "Not(A:Brand)" decoy entries.
-  const brands = (navigator.userAgentData?.brands || [])
+  // Prefer `fullVersionList` (full dotted version) over the major-only
+  // default `brands` list.
+  const brandSource = fullVersionList || navigator.userAgentData?.brands || [];
+  const brands = brandSource
     .filter(b => b && !/not[^\w]*a[^\w]*brand/i.test(b.brand));
 
   return {
