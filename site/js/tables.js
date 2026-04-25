@@ -12,6 +12,12 @@ function sortResults(results, key, dir) {
   const isNum = NUM_KEYS.has(key);
   return [...results].sort((a, b) => {
     let va = a[key], vb = b[key];
+    // Submitter is an object — collapse to its name for comparison and let
+    // the null-handling below treat unattributed rows as the lowest.
+    if (key === 'submittedBy') {
+      va = va?.name || null;
+      vb = vb?.name || null;
+    }
     if (va == null && vb == null) return 0;
     if (va == null) return 1;
     if (vb == null) return -1;
@@ -62,6 +68,7 @@ export function renderResultsTable(results) {
     { key: 'variant', label: 'Quant', priority: 1 },
     { key: 'sizeMB', label: 'Size (MB)', priority: 3 },
     { key: 'browser', label: 'Browser', priority: 2 },
+    { key: 'submittedBy', label: 'Submitter', priority: 2 },
     { key: 'nGpuLayers', label: 'Backend', priority: 2 },
     { key: 'status', label: 'Status', priority: 1 },
     { key: 'buildType', label: 'Build', priority: 3 },
@@ -138,6 +145,9 @@ export function renderResultsTable(results) {
           } else {
             html += '<span class="text-muted">\u2014</span>';
           }
+          break;
+        case 'submittedBy':
+          html += renderSubmitterCell(r.submittedBy);
           break;
         case 'llamaCppCommit':
           if (r.llamaCppCommit) {
@@ -233,23 +243,15 @@ export function renderMachineInfo(machines) {
     return;
   }
 
-  // Show up to this many avatars before collapsing the rest into "+N".
-  // Three keeps the row visually balanced with the card width on mobile.
-  const MAX_VISIBLE_SUBMITTERS = 3;
-
   let html = '<div class="machine-grid">';
   for (const m of machines) {
     const failCount = m.resultCount - m.passCount;
-    const submitters = Array.isArray(m.submitters) ? m.submitters : [];
-    const submitterRow = submitters.length > 0
-      ? renderSubmitterStack(submitters, MAX_VISIBLE_SUBMITTERS)
-      : '';
     html += `
       <div class="machine-card">
         <div class="machine-card-header">
           <svg class="machine-card-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
           <h3>${escapeHtml(m.cpus)}</h3>
-        </div>${submitterRow}
+        </div>
         <div class="machine-card-specs">
           <div class="spec-row"><span class="spec-label">Platform</span><span class="spec-value">${m.platform}</span></div>
           <div class="spec-row"><span class="spec-label">Arch</span><span class="spec-value">${m.arch}</span></div>
@@ -272,35 +274,14 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-/* Render a stack of contributor avatars on a machine card. The first avatar
-   doubles as a profile link with the @username next to it; additional
-   contributors stack as overlapping circles, with any over MAX_VISIBLE
-   collapsing to a "+N" chip. The full list is preserved in the title
-   attribute as a tooltip. */
-function renderSubmitterStack(submitters, maxVisible) {
-  const visible = submitters.slice(0, maxVisible);
-  const overflow = submitters.length - visible.length;
-  const fullList = submitters.map(s => `@${s.name}${s.count ? ` (${s.count})` : ''}`).join(', ');
-  const lead = visible[0];
-
-  const avatarStack = visible.map((s, i) => {
-    const offset = i * -8; // overlap by 8px
-    const img = s.avatarUrl
-      ? `<img class="machine-card-submitter-avatar" src="${escapeHtml(s.avatarUrl)}" alt="" width="22" height="22" loading="lazy">`
-      : '<span class="machine-card-submitter-avatar machine-card-submitter-avatar--placeholder" aria-hidden="true"></span>';
-    return `<a href="https://huggingface.co/${escapeHtml(s.name)}" target="_blank" rel="noopener" class="machine-card-submitter-pip" style="margin-left: ${offset}px;" title="@${escapeHtml(s.name)}${s.count ? ` · ${s.count} submissions` : ''}">${img}</a>`;
-  }).join('');
-
-  const overflowChip = overflow > 0
-    ? `<span class="machine-card-submitter-more" title="${escapeHtml(fullList)}">+${overflow}</span>`
-    : '';
-  const leadName = `<span class="machine-card-submitter-name">@${escapeHtml(lead.name)}${overflow > 0 || submitters.length > 1 ? ` <span class="machine-card-submitter-others">+${submitters.length - 1} other${submitters.length - 1 === 1 ? '' : 's'}</span>` : ''}</span>`;
-
-  return `
-          <div class="machine-card-submitters" title="${escapeHtml(fullList)}">
-            <div class="machine-card-submitter-pips">${avatarStack}${overflowChip}</div>
-            ${leadName}
-          </div>`;
+/* Render a single submitter's avatar + @username link for the Results
+   table column. Falls back to an em-dash if attribution is unknown. */
+function renderSubmitterCell(sb) {
+  if (!sb?.name) return '<span class="text-muted">\u2014</span>';
+  const avatar = sb.avatarUrl
+    ? `<img class="submitter-avatar" src="${escapeHtml(sb.avatarUrl)}" alt="" width="18" height="18" loading="lazy">`
+    : '<span class="submitter-avatar submitter-avatar--placeholder" aria-hidden="true"></span>';
+  return `<a class="submitter-link" href="https://huggingface.co/${escapeHtml(sb.name)}" target="_blank" rel="noopener" title="View @${escapeHtml(sb.name)} on Hugging Face">${avatar}<span class="submitter-name">@${escapeHtml(sb.name)}</span></a>`;
 }
 
 export function renderCpuGpuTable(results) {
