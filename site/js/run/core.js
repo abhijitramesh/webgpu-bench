@@ -49,6 +49,9 @@ export async function runBenchmarkCore({
     output: '',
   };
 
+  // Declared outside the try so the catch can free our heap allocation.
+  let Module;
+
   try {
     // WebGPU adapter probe — informational only.
     if (navigator.gpu) {
@@ -72,7 +75,7 @@ export async function runBenchmarkCore({
     onLog(`JSPI supported: ${hasJspi} — using ${buildType} variant`);
     await loadBenchScriptOnce(buildType);
 
-    const Module = await globalThis.createBenchModule({
+    Module = await globalThis.createBenchModule({
       print: (text) => onLog(`[wasm] ${text}`),
       printErr: (text) => onLog(`[wasm:err] ${text}`),
       // Catch Emscripten abort() — Firefox can abort during Asyncify init.
@@ -93,25 +96,49 @@ export async function runBenchmarkCore({
       contentLength ? `${(contentLength / (1024 * 1024)).toFixed(1)} MB` : 'unknown'
     }`);
 
-    // Stream directly into MEMFS to avoid holding the full model in JS memory.
-    // Pre-allocate so MEMFS doesn't realloc on every chunk.
-    if (contentLength > 0) {
-      Module.FS.writeFile('/model.gguf', new Uint8Array(0));
-      Module.FS.truncate('/model.gguf', contentLength);
+    // Stream the GGUF directly into the WASM heap (HeapFS-style) to avoid a
+    // duplicate JS-side MEMFS staging buffer. _malloc reserves a region in
+    // the linear memory; HEAPU8.set writes chunks in place. We then expose
+    // the region as a MEMFS file with `canOwn=true` so MEMFS does not copy,
+    // and override node.contents with a getter that always rebuilds the
+    // view from the saved pointer — this survives the heap growth that
+    // llama.cpp triggers during bench_init/bench_load.
+    if (!(contentLength > 0)) {
+      throw new Error('content-length is required for streaming into WASM heap');
     }
-    const memfsHandle = Module.FS.open('/model.gguf', 'w');
-    const reader = stream.getReader();
-    let downloaded = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      Module.FS.write(memfsHandle, value, 0, value.length, downloaded);
-      downloaded += value.length;
-      const fraction = contentLength ? downloaded / contentLength : 0;
-      onProgress(fraction, downloaded, contentLength);
+    let modelPtr = Module._malloc(contentLength);
+    if (!modelPtr) {
+      throw new Error(
+        `_malloc(${(contentLength / (1024 * 1024)).toFixed(0)} MB) failed — wasm heap exhausted`
+      );
     }
-    Module.FS.close(memfsHandle);
-    onLog(`Model written to /model.gguf (${(downloaded / (1024 * 1024)).toFixed(1)} MB)`);
+    try {
+      const reader = stream.getReader();
+      let downloaded = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        Module.HEAPU8.set(value, modelPtr + downloaded);
+        downloaded += value.length;
+        onProgress(downloaded / contentLength, downloaded, contentLength);
+      }
+      onLog(`Model written to WASM heap @ 0x${modelPtr.toString(16)} (${(downloaded / (1024 * 1024)).toFixed(1)} MB)`);
+
+      const view = new Uint8Array(Module.HEAPU8.buffer, modelPtr, contentLength);
+      Module.FS.createDataFile('/', 'model.gguf', view, true, false, true);
+      const node = Module.FS.lookupPath('/model.gguf').node;
+      Object.defineProperty(node, 'contents', {
+        get: () => new Uint8Array(Module.HEAPU8.buffer, modelPtr, contentLength),
+        set: () => { /* read-only */ },
+        configurable: true,
+      });
+      node.usedBytes = contentLength;
+    } catch (err) {
+      Module._free(modelPtr);
+      throw err;
+    }
+    // Track on the result object so we can free in the success/exit paths.
+    result._modelPtr = modelPtr;
 
     // Init backend.
     onStatus('initializing', 'Initializing llama.cpp backends...');
@@ -133,12 +160,13 @@ export async function runBenchmarkCore({
     if (loadResult !== 0) throw new Error(`bench_load failed: ${loadResult}`);
     onLog('Model loaded');
 
-    // llama.cpp has copied the model into WASM heap — free the MEMFS copy.
+    // Drop the MEMFS node — llama.cpp's mmap captured a pointer into the
+    // _malloc'd region in the WASM heap, so the bytes themselves stay alive
+    // until we _free below after bench_exit.
     try {
       Module.FS.unlink('/model.gguf');
-      onLog('Freed model file from virtual FS');
     } catch (e) {
-      onLog(`Warning: could not remove model file from FS: ${e.message}`);
+      onLog(`Warning: could not remove model FS node: ${e.message}`);
     }
 
     // Run inference.
@@ -198,6 +226,12 @@ export async function runBenchmarkCore({
     onLog('Calling bench_exit()...');
     await Module.ccall('bench_exit', null, [], [], { async: true });
 
+    // Free the heap-resident model bytes now that llama.cpp has unmapped.
+    if (result._modelPtr) {
+      Module._free(result._modelPtr);
+      delete result._modelPtr;
+    }
+
     result.status = 'done';
     onStatus('done', `Done! Prefill: ${prefillTokS} tok/s | Decode: ${decodeTokS} tok/s`);
     onLog(
@@ -216,6 +250,11 @@ export async function runBenchmarkCore({
     onStatus('error', `Error: ${err.message}`);
     onLog(`ERROR: ${err.message}`);
     if (err.stack) onLog(err.stack);
+    // Best-effort: release the model heap region so a re-run can reuse it.
+    if (result._modelPtr && Module?._free) {
+      try { Module._free(result._modelPtr); } catch { /* ignore */ }
+      delete result._modelPtr;
+    }
     return result;
   }
 }

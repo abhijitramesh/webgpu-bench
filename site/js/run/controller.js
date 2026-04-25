@@ -991,19 +991,19 @@ async function runVariantWithIterations(v, row) {
     cpuResult = { status: 'error', error: err.message || String(err) };
   }
 
-  if (cpuResult.status !== 'done') {
-    return {
-      status: 'error',
-      error: `CPU baseline failed: ${cpuResult.error || 'unknown'}`,
-      iterations: 0,
-      cpu: cpuResult,
-      gpuSamples: [],
-      consistency: null,
-      gpuCore: null,
-    };
+  // CPU baseline is "best effort": if it fails (typically OOM on a tight
+  // tab), keep going with GPU runs but skip the consistency check, since
+  // we'd have no reference token IDs to compare against. The user still
+  // gets prefill/decode metrics — just no agreement-rate number.
+  const cpuOk = cpuResult.status === 'done';
+  if (!cpuOk) {
+    logLine(
+      `CPU baseline failed (${cpuResult.error || 'unknown'}) — proceeding with GPU runs, skipping consistency check.`
+    );
+    row.setStatus('cpu-skipped', 'continuing with GPU only');
   }
 
-  const refTokenIds = (cpuResult.metrics?.token_ids || []).join(',');
+  const refTokenIds = cpuOk ? (cpuResult.metrics?.token_ids || []).join(',') : '';
 
   // ─── GPU iterations ───
   const gpuSamples = [];

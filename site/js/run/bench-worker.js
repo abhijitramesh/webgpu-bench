@@ -126,25 +126,61 @@ async function runOne({ params, stream }) {
   });
   log('WASM module loaded');
 
-  // ─── Stream the model into MEMFS ───
-  status('downloading', 'Streaming model into WASM FS...');
-  if (contentLength > 0) {
-    Module.FS.writeFile('/model.gguf', new Uint8Array(0));
-    Module.FS.truncate('/model.gguf', contentLength);
+  // ─── Stream the model into the WASM heap (HeapFS-style) ───
+  // Avoid the JS-side MEMFS staging buffer by allocating space inside the
+  // WASM heap with _malloc and writing chunks directly via HEAPU8.set. Then
+  // register the file with MEMFS using a Uint8Array view backed by the heap
+  // region, so llama.cpp's mmap can take the zero-copy branch in MEMFS.mmap
+  // (which fires when contents.buffer === HEAP8.buffer).
+  //
+  // Heap growth during bench_init/bench_load detaches old views, so we
+  // override node.contents with a getter that always rebuilds the view
+  // from the saved pointer + length against the current Module.HEAPU8.
+  if (!(contentLength > 0)) {
+    throw new Error('content-length is required for streaming into WASM heap');
   }
-  const memfsHandle = Module.FS.open('/model.gguf', 'w');
-  const reader = stream.getReader();
-  let downloaded = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    Module.FS.write(memfsHandle, value, 0, value.length, downloaded);
-    downloaded += value.length;
-    const fraction = contentLength ? downloaded / contentLength : 0;
-    post({ type: 'progress', fraction, downloaded, total: contentLength });
+  status('downloading', 'Streaming model into WASM heap...');
+
+  let modelPtr = Module._malloc(contentLength);
+  if (!modelPtr) {
+    throw new Error(
+      `_malloc(${(contentLength / (1024 * 1024)).toFixed(0)} MB) failed — wasm heap exhausted`
+    );
   }
-  Module.FS.close(memfsHandle);
-  log(`Model written to /model.gguf (${(downloaded / (1024 * 1024)).toFixed(1)} MB)`);
+
+  try {
+    const reader = stream.getReader();
+    let downloaded = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      Module.HEAPU8.set(value, modelPtr + downloaded);
+      downloaded += value.length;
+      post({ type: 'progress', fraction: downloaded / contentLength, downloaded, total: contentLength });
+    }
+    log(`Model written to WASM heap @ 0x${modelPtr.toString(16)} (${(downloaded / (1024 * 1024)).toFixed(1)} MB)`);
+
+    // Register as a MEMFS file with a heap-backed view. canOwn=true so MEMFS
+    // doesn't make its own copy.
+    const view = new Uint8Array(Module.HEAPU8.buffer, modelPtr, contentLength);
+    Module.FS.createDataFile('/', 'model.gguf', view, true, false, true);
+
+    // Replace contents with a getter — heap growth (e.g. when llama.cpp
+    // allocates KV cache) replaces Module.HEAPU8.buffer, which would
+    // detach our static view. The getter rebuilds against the live buffer.
+    const node = Module.FS.lookupPath('/model.gguf').node;
+    Object.defineProperty(node, 'contents', {
+      get: () => new Uint8Array(Module.HEAPU8.buffer, modelPtr, contentLength),
+      set: () => { /* read-only file */ },
+      configurable: true,
+    });
+    // usedBytes is read by MEMFS for stat() — keep it accurate.
+    node.usedBytes = contentLength;
+  } catch (err) {
+    Module._free(modelPtr);
+    modelPtr = 0;
+    throw err;
+  }
 
   // ─── Init backend ───
   status('initializing', 'Initializing llama.cpp backends...');
@@ -164,12 +200,13 @@ async function runOne({ params, stream }) {
   if (loadResult !== 0) throw new Error(`bench_load failed: ${loadResult}`);
   log('Model loaded');
 
-  // Free MEMFS copy — llama.cpp has mapped weights into its own heap by now.
+  // Drop the MEMFS node — the bytes themselves stay alive in the WASM heap
+  // because llama.cpp's mmap captured a pointer into our _malloc'd region.
+  // We free that region after bench_exit.
   try {
     Module.FS.unlink('/model.gguf');
-    log('Freed model file from virtual FS');
   } catch (err) {
-    log(`Warning: could not remove model file from FS: ${err.message}`);
+    log(`Warning: could not remove model FS node: ${err.message}`);
   }
 
   // ─── Inference ───
@@ -226,6 +263,12 @@ async function runOne({ params, stream }) {
   }
 
   await Module.ccall('bench_exit', null, [], [], { async: true });
+
+  // Free the heap-resident model bytes now that llama.cpp has unmapped.
+  if (modelPtr) {
+    Module._free(modelPtr);
+    modelPtr = 0;
+  }
 
   result.status = 'done';
   status('done', `Done! Prefill: ${prefillTokS} tok/s | Decode: ${decodeTokS} tok/s`);
