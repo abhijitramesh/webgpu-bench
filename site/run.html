@@ -71,19 +71,6 @@
           <button id="run-crash-banner-dismiss" class="btn btn-secondary btn-xs" type="button">Dismiss</button>
         </div>
 
-        <!-- HF sign-in + submit (space surface only) -->
-        <div id="hub-row" class="card hub-row" hidden>
-          <div class="hub-row-inner">
-            <div class="hub-row-info">
-              <span id="hf-user"></span>
-            </div>
-            <div class="hub-row-actions">
-              <button id="btn-signin" class="btn btn-secondary" type="button">Sign in with Hugging Face</button>
-              <button id="btn-submit" class="btn btn-primary" type="button" disabled hidden>Submit to leaderboard</button>
-            </div>
-          </div>
-        </div>
-
         <!-- Device & budget -->
         <div class="summary-grid run-device-grid">
           <div class="stat-card run-device-card">
@@ -178,6 +165,20 @@
         </div>
         <div class="table-card">
           <div id="run-progress-wrapper" class="results-wrapper"></div>
+        </div>
+
+        <!-- HF sign-in + submit (space surface only) — sits between Progress
+             and Output so users land on it once they have results to push. -->
+        <div id="hub-row" class="card hub-row" hidden>
+          <div class="hub-row-inner">
+            <div class="hub-row-info">
+              <span id="hf-user"></span>
+            </div>
+            <div class="hub-row-actions">
+              <button id="btn-signin" class="btn btn-secondary" type="button">Sign in with Hugging Face</button>
+              <button id="btn-submit" class="btn btn-primary" type="button" disabled hidden>Submit to leaderboard</button>
+            </div>
+          </div>
         </div>
 
         <!-- Output -->

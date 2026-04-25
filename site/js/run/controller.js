@@ -1007,12 +1007,87 @@ function runInWorker({
       finish({ status: 'error', error: 'worker message deserialization failed' });
     };
 
-    try {
-      worker.postMessage({ type: 'run', params, stream }, [stream]);
-    } catch (err) {
-      finish({ status: 'error', error: `postMessage failed: ${err.message}` });
+    // Mobile browsers (esp. iOS Safari) advertise transferable streams but
+    // can't actually transfer ReadableStreams across postMessage — the call
+    // throws "The object can not be cloned." We probe once with a tiny
+    // MessageChannel handshake, then take the buffered path on devices that
+    // fail it: drain the stream into an ArrayBuffer on the main thread (still
+    // emitting progress events) and transfer the buffer instead. ArrayBuffer
+    // is universally transferable, so this works everywhere.
+    if (transferableStreamsSupported()) {
+      try {
+        worker.postMessage({ type: 'run', params, stream }, [stream]);
+      } catch (err) {
+        finish({ status: 'error', error: `postMessage failed: ${err.message}` });
+      }
+    } else {
+      onStatus?.('downloading', 'Buffering model on main thread…');
+      readStreamToBuffer(stream, params.contentLength, (fr, dl, total) => {
+        onProgress?.(fr, dl, total);
+      }).then((buffer) => {
+        if (settled) return; // worker errored mid-buffer
+        try {
+          worker.postMessage({ type: 'run', params, buffer }, [buffer]);
+        } catch (err) {
+          finish({ status: 'error', error: `buffered postMessage failed: ${err.message}` });
+        }
+      }).catch((err) => {
+        finish({ status: 'error', error: `stream buffering failed: ${err.message}` });
+      });
     }
   });
+}
+
+/* Feature-test transferable ReadableStream once. The cheapest reliable
+   probe is a MessageChannel postMessage with the stream as a transferable —
+   if the runtime can't transfer it the call throws synchronously. */
+function transferableStreamsSupported() {
+  if (transferableStreamsSupported.cached !== undefined) {
+    return transferableStreamsSupported.cached;
+  }
+  let result = false;
+  try {
+    const probeStream = new ReadableStream();
+    const channel = new MessageChannel();
+    channel.port1.postMessage(probeStream, [probeStream]);
+    channel.port1.close();
+    channel.port2.close();
+    result = true;
+  } catch {
+    result = false;
+  }
+  transferableStreamsSupported.cached = result;
+  return result;
+}
+
+/* Drain a ReadableStream<Uint8Array> into one contiguous ArrayBuffer,
+   emitting progress callbacks per chunk. Used by the mobile fallback when
+   transferable streams aren't available. */
+async function readStreamToBuffer(stream, contentLength, onProgress) {
+  const reader = stream.getReader();
+  const chunks = [];
+  let downloaded = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      downloaded += value.length;
+      const fraction = contentLength > 0 ? downloaded / contentLength : 0;
+      onProgress?.(fraction, downloaded, contentLength);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* noop */ }
+  }
+  // Concatenate into one buffer the worker can write into the WASM heap.
+  const total = downloaded;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out.buffer;
 }
 
 // Fetch the model through the source adapter and hand the stream to a

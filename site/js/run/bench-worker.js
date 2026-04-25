@@ -8,7 +8,12 @@
 //     type: 'run',
 //     params: { buildType, prompt, nPredict, nCtx, nGpuLayers, refTokenIds,
 //               contentLength },
-//     stream: ReadableStream<Uint8Array>  // TRANSFERRED via postMessage
+//     // Exactly one of these — depends on whether the runtime supports
+//     // transferable ReadableStreams (most desktops do; iOS Safari and some
+//     // mobile Chrome configs don't, in which case the main thread drains
+//     // the stream into an ArrayBuffer and transfers the buffer instead):
+//     stream?: ReadableStream<Uint8Array>,  // TRANSFERRED
+//     buffer?: ArrayBuffer                  // TRANSFERRED (mobile fallback)
 //   }
 //
 //   worker → main: { type: 'status', status, msg }
@@ -50,7 +55,7 @@ self.onmessage = async (e) => {
   }
 };
 
-async function runOne({ params, stream }) {
+async function runOne({ params, stream, buffer }) {
   const {
     buildType,
     prompt,
@@ -60,6 +65,9 @@ async function runOne({ params, stream }) {
     refTokenIds,
     contentLength,
   } = params;
+  if (!stream && !buffer) {
+    throw new Error('runOne: exactly one of `stream` or `buffer` must be provided');
+  }
 
   const result = {
     status: 'init',
@@ -149,14 +157,28 @@ async function runOne({ params, stream }) {
   }
 
   try {
-    const reader = stream.getReader();
     let downloaded = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      Module.HEAPU8.set(value, modelPtr + downloaded);
-      downloaded += value.length;
-      post({ type: 'progress', fraction: downloaded / contentLength, downloaded, total: contentLength });
+    if (stream) {
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        Module.HEAPU8.set(value, modelPtr + downloaded);
+        downloaded += value.length;
+        post({ type: 'progress', fraction: downloaded / contentLength, downloaded, total: contentLength });
+      }
+    } else {
+      // Buffered path (mobile fallback): the whole file is already in
+      // memory. Copy it into the WASM heap in one shot. Progress was
+      // emitted on the main thread while buffering, so we just report 100%
+      // here for the loading phase.
+      const view = new Uint8Array(buffer);
+      if (view.byteLength !== contentLength) {
+        log(`warning: buffer size ${view.byteLength} != content-length ${contentLength}`);
+      }
+      Module.HEAPU8.set(view, modelPtr);
+      downloaded = view.byteLength;
+      post({ type: 'progress', fraction: 1, downloaded, total: contentLength });
     }
     log(`Model written to WASM heap @ 0x${modelPtr.toString(16)} (${(downloaded / (1024 * 1024)).toFixed(1)} MB)`);
 
