@@ -90,6 +90,11 @@ jobs:
             mkdir -p _deploy/build/jspi _deploy/build/asyncify
             cp build/jspi/bin/bench.js build/jspi/bin/bench.wasm _deploy/build/jspi/
             cp build/asyncify/bin/bench.js build/asyncify/bin/bench.wasm _deploy/build/asyncify/
+            # build-info.json is emitted by build.sh next to the wasm; copy
+            # alongside so the browser can stamp llama.cpp commit/describe
+            # onto each record. Optional — older WASM dirs may not have it.
+            [ -f build/jspi/bin/build-info.json ] && cp build/jspi/bin/build-info.json _deploy/build/jspi/ || true
+            [ -f build/asyncify/bin/build-info.json ] && cp build/asyncify/bin/build-info.json _deploy/build/asyncify/ || true
             echo "Included WASM artifacts in bundle."
           else
             echo "No build/ artifacts found; leaving Space WASM untouched."

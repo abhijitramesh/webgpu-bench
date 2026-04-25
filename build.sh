@@ -87,6 +87,33 @@ build_variant() {
         echo "ERROR: $variant_name build failed - output files not found!"
         exit 1
     fi
+
+    # Stamp the llama.cpp commit + describe + dawn tag next to the wasm so the
+    # browser can fetch it at runtime and attach it to every benchmark record.
+    # Lets us compare performance across llama.cpp versions later.
+    write_build_info "$build_dir/bin"
+}
+
+write_build_info() {
+    local out_dir="$1"
+    local llama_dir="$SCRIPT_DIR/llama.cpp"
+    local llama_commit=""
+    local llama_describe=""
+    if [ -d "$llama_dir/.git" ] || [ -f "$llama_dir/.git" ]; then
+        llama_commit="$(git -C "$llama_dir" rev-parse HEAD 2>/dev/null || echo '')"
+        llama_describe="$(git -C "$llama_dir" describe --tags --always 2>/dev/null || echo '')"
+    fi
+    local built_at
+    built_at="$(date -u +%FT%TZ)"
+    cat > "$out_dir/build-info.json" <<EOF
+{
+  "llamaCppCommit": "${llama_commit}",
+  "llamaCppDescribe": "${llama_describe}",
+  "dawnTag": "${DAWN_TAG}",
+  "builtAt": "${built_at}"
+}
+EOF
+    echo "Wrote $out_dir/build-info.json (llama.cpp ${llama_describe:-unknown})"
 }
 
 # Build JSPI variant (for Chrome)

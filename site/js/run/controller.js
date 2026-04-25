@@ -45,7 +45,27 @@ const state = {
   sessionDownloads: new Set(),
   // Handle to the currently-running worker, so Abort can terminate it.
   currentWorker: null,
+  // Build metadata fetched from `build/<variant>/build-info.json`. Stamped
+  // onto every result record so we can compare performance across llama.cpp
+  // versions. JSPI and Asyncify variants are built from the same source
+  // tree, so a single fetch is enough; both files would be identical.
+  buildInfo: null,
 };
+
+async function loadBuildInfo() {
+  // Try jspi first (Chrome path), fall back to asyncify (Safari/Firefox path).
+  // Either contains the same llama.cpp commit/describe.
+  const candidates = ['./build/jspi/build-info.json', './build/asyncify/build-info.json'];
+  for (const url of candidates) {
+    try {
+      const r = await fetch(url, { cache: 'no-cache' });
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (data && (data.llamaCppCommit || data.llamaCppDescribe)) return data;
+    } catch { /* try next */ }
+  }
+  return null;
+}
 
 // ──────────────── surface detection ────────────────
 
@@ -250,6 +270,24 @@ function renderHeader() {
     webgpuCell.textContent = d.webgpu ? 'yes' : 'no';
     webgpuCell.classList.toggle('text-success', d.webgpu);
     webgpuCell.classList.toggle('text-error', !d.webgpu);
+  }
+
+  const llamaCell = $('device-llamacpp');
+  if (llamaCell) {
+    const bi = state.buildInfo;
+    if (bi?.llamaCppCommit) {
+      const label = bi.llamaCppDescribe || bi.llamaCppCommit.slice(0, 10);
+      llamaCell.innerHTML = '';
+      const a = document.createElement('a');
+      a.href = `https://github.com/ggml-org/llama.cpp/commit/${bi.llamaCppCommit}`;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.className = 'mono';
+      a.textContent = label;
+      llamaCell.appendChild(a);
+    } else {
+      llamaCell.textContent = '—';
+    }
   }
 
   // Surface-dependent UI gating.
@@ -1338,6 +1376,11 @@ function makeRecord(v, vr, machine, browser, wallTimeMs) {
     webgpuAvailable: vr.gpuCore?.webgpuAvailable ?? !!navigator.gpu,
     gpuAdapterInfo: vr.gpuCore?.gpuAdapterInfo ?? null,
     buildType: vr.gpuCore?.buildType ?? null,
+    // llama.cpp version stamped from build-info.json. Lets us correlate
+    // result drift with llama.cpp upgrades over time.
+    llamaCppCommit: state.buildInfo?.llamaCppCommit ?? null,
+    llamaCppDescribe: state.buildInfo?.llamaCppDescribe ?? null,
+    dawnTag: state.buildInfo?.dawnTag ?? null,
     metrics,
     consistency: vr.consistency ?? null,
     cpu_baseline: cpuBaseline,
@@ -1626,6 +1669,12 @@ export async function mountRunSection() {
   state.source = state.surface === 'localhost' ? localSource() : hostedSource();
   state.budget = await getDeviceBudgetMB();
   state.device = await describeDevice();
+  // Don't block mount on the build-info fetch — it's non-critical and the
+  // first record will pick it up on the next render once it resolves.
+  loadBuildInfo().then(info => {
+    state.buildInfo = info;
+    renderHeader();
+  }).catch(() => { /* keep buildInfo null */ });
 
   try {
     state.models = await loadModels();
