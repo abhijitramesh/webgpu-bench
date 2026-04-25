@@ -5,6 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
   <script>(function(){var s=localStorage.getItem('theme');if(!s){s=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}document.documentElement.setAttribute('data-theme',s);})();</script>
+  <script>
+    // OAuth-popup flash guard: if this load is the HF sign-in popup callback,
+    // hide the page immediately so the user doesn't see the bench skeleton
+    // flash before mountRunSection() runs the close path.
+    (function () {
+      try {
+        var p = new URLSearchParams(location.search);
+        if (!p.get('code') || !p.get('state')) return;
+        var hasOpener = !!(window.opener && window.opener !== window);
+        var marker = false;
+        try {
+          var raw = localStorage.getItem('webgpu-bench:hfPopupPending');
+          if (raw) {
+            var data = JSON.parse(raw);
+            marker = !!(data && data.ts && (Date.now() - data.ts) < 10 * 60 * 1000);
+          }
+        } catch (e) { /* localStorage disabled */ }
+        if (hasOpener || marker) {
+          document.documentElement.style.visibility = 'hidden';
+        }
+      } catch (e) { /* noop */ }
+    })();
+  </script>
   <title>Run — WebGPU Bench</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

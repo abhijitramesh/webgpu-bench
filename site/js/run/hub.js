@@ -31,6 +31,29 @@ import {
 // the popup completes sign-in.
 export const HF_TOKEN_STORAGE_KEY = 'webgpu-bench:hfOauth';
 export const HF_POPUP_DONE_MESSAGE = 'webgpu-bench:hf-signed-in';
+// Marker written by the opener tab right before window.open(). The popup
+// reads it on callback to know it's running inside a popup — `window.opener`
+// is unreliable because HF's OAuth page sets a COOP header that severs the
+// opener relationship in Chrome/Safari. Marker is cleared after callback.
+const HF_POPUP_PENDING_KEY = 'webgpu-bench:hfPopupPending';
+const HF_POPUP_PENDING_TTL_MS = 10 * 60 * 1000;
+
+export function isHFPopupCallback() {
+  if (typeof window === 'undefined') return false;
+  if (window.opener && window.opener !== window) return true;
+  try {
+    const raw = localStorage.getItem(HF_POPUP_PENDING_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    if (!data?.ts || (Date.now() - data.ts) > HF_POPUP_PENDING_TTL_MS) {
+      localStorage.removeItem(HF_POPUP_PENDING_KEY);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // ──────────────── session ────────────────
 
@@ -53,12 +76,15 @@ export async function resumeHFSession() {
       const url = new URL(location.href);
       for (const k of ['code', 'state']) url.searchParams.delete(k);
       history.replaceState({}, '', url.toString());
-      // Popup hand-off: tell the opener tab and close. The opener also
-      // gets a `storage` event from the localStorage write — postMessage
-      // is the fast path; storage event is the safety net.
-      if (typeof window !== 'undefined' && window.opener
-          && window.opener !== window && !window.opener.closed) {
-        try { window.opener.postMessage({ type: HF_POPUP_DONE_MESSAGE }, location.origin); } catch { /* opener navigated */ }
+      // Popup hand-off: tell the opener tab (if accessible) and close. The
+      // opener also gets a `storage` event from the localStorage write —
+      // postMessage is the fast path; storage event is the safety net for
+      // when COOP severs window.opener.
+      if (isHFPopupCallback()) {
+        localStorage.removeItem(HF_POPUP_PENDING_KEY);
+        if (window.opener && window.opener !== window && !window.opener.closed) {
+          try { window.opener.postMessage({ type: HF_POPUP_DONE_MESSAGE }, location.origin); } catch { /* opener gone */ }
+        }
         try { window.close(); } catch { /* not script-opened */ }
       }
       return session;
@@ -110,8 +136,14 @@ export async function beginHFSignIn({ popup = false } = {}) {
     redirectUrl: location.origin + location.pathname,
   });
   if (popup) {
+    // Set marker BEFORE window.open so the popup callback can detect popup
+    // mode even when COOP nullifies window.opener.
+    try {
+      localStorage.setItem(HF_POPUP_PENDING_KEY, JSON.stringify({ ts: Date.now() }));
+    } catch { /* quota / disabled — best effort */ }
     const win = window.open(url, 'hf-oauth', 'popup=yes,width=520,height=720');
     if (!win) {
+      try { localStorage.removeItem(HF_POPUP_PENDING_KEY); } catch { /* noop */ }
       const err = new Error('Popup blocked — allow popups for this site, or use full-page sign-in.');
       err.code = 'popup-blocked';
       throw err;

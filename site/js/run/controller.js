@@ -7,7 +7,7 @@ import { localSource, hostedSource, inventoryOpfs, purgeOpfs } from './source.js
 import { getDeviceBudgetMB, variantFits, describeDevice } from './device.js';
 import {
   resumeHFSession, beginHFSignIn, signOutHF, submitResultsToDataset,
-  HF_TOKEN_STORAGE_KEY, HF_POPUP_DONE_MESSAGE,
+  HF_TOKEN_STORAGE_KEY, HF_POPUP_DONE_MESSAGE, isHFPopupCallback,
 } from './hub.js';
 import { isHubConfigured, HF_DATASET_REPO } from './config.js';
 
@@ -1586,13 +1586,13 @@ export async function mountRunSection() {
   if (state.mounted) return;
 
   // OAuth popup fast-path: when this page is loaded inside the sign-in
-  // popup, the URL carries `code`+`state` from HF and `window.opener` is
-  // the original tab. Complete the handshake (which posts to the opener
-  // and closes this window) instead of mounting the full Run UI.
-  if (typeof window !== 'undefined' && window.opener
-      && window.opener !== window) {
+  // popup, the URL carries `code`+`state` from HF. We can't rely on
+  // `window.opener` alone because HF's OAuth response sets COOP, which
+  // severs the opener reference in Chrome/Safari. `isHFPopupCallback()`
+  // also checks the localStorage marker the opener writes pre-popup.
+  if (typeof window !== 'undefined') {
     const params = new URLSearchParams(location.search);
-    if (params.get('code') && params.get('state')) {
+    if (params.get('code') && params.get('state') && isHFPopupCallback()) {
       document.body.innerHTML =
         '<div style="padding:32px;font-family:system-ui,sans-serif;font-size:14px;color:#444">'
         + 'Signing in… you can close this tab if it doesn\'t close automatically.'
