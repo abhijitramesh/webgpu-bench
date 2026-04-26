@@ -129,14 +129,19 @@ function writeSessionCache(data) {
 }
 
 /* Reduce a flat result set down to one canonical row per
-   (machineSlug, browser, model, variant) cell. Picks the row with the most
-   iterations; ties break on latest timestamp. This is the leaderboard view —
-   "best representative number per cell" — and is what the dashboard renders
-   in the table, charts, and stat cards. */
+   (machineSlug, browser, model, variant, backend) cell. Picks the row with
+   the most iterations; ties break on latest timestamp. This is the
+   leaderboard view — "best representative number per cell" — and is what
+   the dashboard renders in the table, charts, and stat cards.
+
+   `backend` (CPU vs GPU, derived from nGpuLayers) is part of the key so
+   CLI CPU+GPU pairs and browser-flow synthetic CPU rows don't collapse
+   into the GPU row. */
 export function selectBestResults(records) {
   const bestByCell = new Map();
   for (const r of records) {
-    const key = `${r.machineSlug}|${r.browser}|${r.model}|${r.variant}`;
+    const backend = r.nGpuLayers === 0 ? 'cpu' : 'gpu';
+    const key = `${r.machineSlug}|${r.browser}|${r.model}|${r.variant}|${backend}`;
     const cur = bestByCell.get(key);
     if (!cur) {
       bestByCell.set(key, r);
@@ -155,27 +160,45 @@ export function selectBestResults(records) {
   return [...bestByCell.values()];
 }
 
-/* Synthesize "CPU only" rows for the CPU-vs-GPU views.
-   Two record sources contribute:
-     1) Real CPU runs (nGpuLayers === 0) — produced by the CLI runner which
-        alternates CPU and GPU passes.
-     2) The cpu_baseline_* fields on every browser-flow record — the in-page
-        bench measures one CPU pass per variant alongside the GPU iterations
-        and stamps the result on the same record. We turn each of those into
-        a synthetic CPU row so the comparison view sees both data shapes.
-*/
+/* Synthesize a CPU row for every browser-flow GPU record (the in-page
+   bench measures one CPU pass per variant alongside the GPU iterations
+   and stamps the result on the same record via cpu_baseline_*). Returns
+   only CPU rows — combine real (nGpuLayers === 0) and synthetic ones.
+   Used by the CPU-vs-GPU views which want the CPU subset only. */
 export function expandCpuRows(results) {
   const real = results.filter(r => r.nGpuLayers === 0);
-  const synthetic = results
+  const synthetic = synthesizeCpuRowsFromBaseline(results);
+  return [...real, ...synthetic];
+}
+
+/* Same synthesis as expandCpuRows but returns the originals plus the
+   synthesized CPU rows — for the main results table where we want both
+   GPU and CPU rows visible. */
+export function withSyntheticCpuRows(results) {
+  return [...results, ...synthesizeCpuRowsFromBaseline(results)];
+}
+
+function synthesizeCpuRowsFromBaseline(results) {
+  return results
     .filter(r => r.nGpuLayers !== 0
       && (r.cpu_baseline_decode_tok_s != null || r.cpu_baseline_prefill_tok_s != null))
     .map(r => ({
       ...r,
       decode_tok_s: r.cpu_baseline_decode_tok_s,
       prefill_tok_s: r.cpu_baseline_prefill_tok_s,
+      // CPU baseline runs have no t_eval / n_eval breakdowns — null those
+      // out so the table doesn't show stale GPU numbers in CPU rows.
+      n_eval: null,
+      t_eval_ms: null,
+      n_p_eval: null,
+      t_p_eval_ms: null,
+      // Strip the embedded baseline from synthetic CPU rows so the
+      // "CPU decode tok/s" column doesn't duplicate the row's own metric.
+      cpu_baseline_decode_tok_s: null,
+      cpu_baseline_prefill_tok_s: null,
+      cpu_baseline: null,
       nGpuLayers: 0,
     }));
-  return [...real, ...synthetic];
 }
 
 export function filterResults(results, filters) {

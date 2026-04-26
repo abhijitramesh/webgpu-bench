@@ -1,4 +1,4 @@
-import { loadData, filterResults, selectBestResults, expandCpuRows } from './data.js';
+import { loadData, filterResults, selectBestResults, expandCpuRows, withSyntheticCpuRows } from './data.js';
 import { initFilters, populateQuantOptions, getFilters, resetFilters } from './filters.js';
 import { renderDecodeChart, renderPrefillChart, renderSizeChart, renderMachineChart, renderCpuGpuChart, renderSpeedupChart } from './charts.js';
 import { renderResultsTable, renderErrorTable, renderMachineInfo, renderCpuGpuTable } from './tables.js';
@@ -77,11 +77,16 @@ function render() {
 
   const filters = getFilters();
   // Filter, then collapse to one canonical row per
-  // (machine, browser, model, variant). Multiple users may submit results
-  // for the same hardware bucket; this keeps the row with the highest
-  // iteration count (tiebreak: most recent) so the leaderboard shows the
-  // most reliable number per cell rather than averaging noisy duplicates.
-  const filtered = selectBestResults(filterResults(appData.results, filters));
+  // (machine, browser, model, variant, backend). Multiple users may submit
+  // results for the same hardware bucket; this keeps the row with the
+  // highest iteration count (tiebreak: most recent) so the leaderboard
+  // shows the most reliable number per cell rather than averaging noisy
+  // duplicates. withSyntheticCpuRows expands each browser-flow record's
+  // cpu_baseline_* into a sibling CPU row so CPU runs (CLI or browser)
+  // appear as their own row in the main table.
+  const filtered = selectBestResults(
+    withSyntheticCpuRows(filterResults(appData.results, filters)),
+  );
 
   // Summary cards — counts tween from previous value to new on filter changes
   // and from 0 on first paint (since `data-value` defaults to "0").
