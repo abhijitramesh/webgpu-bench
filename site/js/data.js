@@ -155,6 +155,29 @@ export function selectBestResults(records) {
   return [...bestByCell.values()];
 }
 
+/* Synthesize "CPU only" rows for the CPU-vs-GPU views.
+   Two record sources contribute:
+     1) Real CPU runs (nGpuLayers === 0) — produced by the CLI runner which
+        alternates CPU and GPU passes.
+     2) The cpu_baseline_* fields on every browser-flow record — the in-page
+        bench measures one CPU pass per variant alongside the GPU iterations
+        and stamps the result on the same record. We turn each of those into
+        a synthetic CPU row so the comparison view sees both data shapes.
+*/
+export function expandCpuRows(results) {
+  const real = results.filter(r => r.nGpuLayers === 0);
+  const synthetic = results
+    .filter(r => r.nGpuLayers !== 0
+      && (r.cpu_baseline_decode_tok_s != null || r.cpu_baseline_prefill_tok_s != null))
+    .map(r => ({
+      ...r,
+      decode_tok_s: r.cpu_baseline_decode_tok_s,
+      prefill_tok_s: r.cpu_baseline_prefill_tok_s,
+      nGpuLayers: 0,
+    }));
+  return [...real, ...synthetic];
+}
+
 export function filterResults(results, filters) {
   return results.filter(r => {
     if (filters.machine && filters.machine !== 'all' && r.machineSlug !== filters.machine) return false;

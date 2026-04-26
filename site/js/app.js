@@ -1,4 +1,4 @@
-import { loadData, filterResults, selectBestResults } from './data.js';
+import { loadData, filterResults, selectBestResults, expandCpuRows } from './data.js';
 import { initFilters, populateQuantOptions, getFilters, resetFilters } from './filters.js';
 import { renderDecodeChart, renderPrefillChart, renderSizeChart, renderMachineChart, renderCpuGpuChart, renderSpeedupChart } from './charts.js';
 import { renderResultsTable, renderErrorTable, renderMachineInfo, renderCpuGpuTable } from './tables.js';
@@ -148,7 +148,8 @@ function renderCpuGpuSection(filtered, metric) {
   const chartsGrid = document.querySelector('#performance-section .charts-grid:nth-of-type(2)');
   const table = document.getElementById('cpu-gpu-table');
   const passed = filtered.filter(r => r.status === 'done');
-  const cpuResults = passed.filter(r => r.nGpuLayers === 0);
+  // Same expansion the chart/table renderers do — see expandCpuRows().
+  const cpuResults = expandCpuRows(passed);
   const gpuResults = passed.filter(r => r.nGpuLayers !== 0);
 
   if (!chartsGrid || !table) {

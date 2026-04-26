@@ -1,4 +1,5 @@
 import { formatTokS, formatMs, categorizeError, groupBy, quantSortKey } from './utils.js';
+import { expandCpuRows } from './data.js';
 
 let lastResults = [];
 let sortState = { key: null, dir: 'asc' };
@@ -302,7 +303,10 @@ export function renderCpuGpuTable(results) {
   ];
 
   const passed = results.filter(r => r.status === 'done');
-  const cpuResults = passed.filter(r => r.nGpuLayers === 0);
+  // CPU side aggregates standalone CPU runs (nGpuLayers === 0) plus
+  // synthetic rows derived from the cpu_baseline_* fields on browser-flow
+  // GPU records. See expandCpuRows() in data.js.
+  const cpuResults = expandCpuRows(passed);
   const gpuResults = passed.filter(r => r.nGpuLayers !== 0);
 
   if (cpuResults.length === 0 || gpuResults.length === 0) {

@@ -1,4 +1,5 @@
 import { BROWSER_COLORS, quantSortKey, groupBy, formatTokS } from './utils.js';
+import { expandCpuRows } from './data.js';
 
 // Global Chart.js theme — uses the site's font tokens and a calm tooltip
 // silhouette. Colors are pulled from CSS variables at render time so the
@@ -255,9 +256,10 @@ export function renderCpuGpuChart(results, metric = 'decode_tok_s') {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
 
-  const passed = results.filter(r => r.status === 'done' && r[metric] != null);
-  const cpuResults = passed.filter(r => r.nGpuLayers === 0);
-  const gpuResults = passed.filter(r => r.nGpuLayers !== 0);
+  const passed = results.filter(r => r.status === 'done');
+  // expandCpuRows folds in cpu_baseline_* from browser-flow GPU records.
+  const cpuResults = expandCpuRows(passed).filter(r => r[metric] != null);
+  const gpuResults = passed.filter(r => r.nGpuLayers !== 0 && r[metric] != null);
 
   if (cpuResults.length === 0 || gpuResults.length === 0) {
     showEmptyState(canvas, cpuResults.length === 0 ? 'No CPU baseline data in current filter' : 'No GPU data in current filter');
@@ -311,9 +313,9 @@ export function renderSpeedupChart(results, metric = 'decode_tok_s') {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
 
-  const passed = results.filter(r => r.status === 'done' && r[metric] != null);
-  const cpuResults = passed.filter(r => r.nGpuLayers === 0);
-  const gpuResults = passed.filter(r => r.nGpuLayers !== 0);
+  const passed = results.filter(r => r.status === 'done');
+  const cpuResults = expandCpuRows(passed).filter(r => r[metric] != null);
+  const gpuResults = passed.filter(r => r.nGpuLayers !== 0 && r[metric] != null);
 
   if (cpuResults.length === 0 || gpuResults.length === 0) {
     showEmptyState(canvas, cpuResults.length === 0 ? 'No CPU baseline data in current filter' : 'No GPU data in current filter');
