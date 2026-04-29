@@ -41,8 +41,11 @@ jobs:
       - uses: actions/checkout@v4
         if: env.SKIP != '1'
         with:
-          # llama.cpp lives as a submodule and is required to build the WASM.
-          submodules: recursive
+          # llama.cpp submodule init is deferred to build.sh because we pin
+          # to a PR-head commit (refs/pull/*/head), which actions/checkout's
+          # default submodule fetch refspec doesn't include. build.sh
+          # configures the PR-ref refspec and clones manually.
+          submodules: false
           lfs: true
 
       - uses: actions/setup-node@v4
@@ -64,7 +67,9 @@ jobs:
         id: wasm-key
         run: |
           # Submodule pointer = exact llama.cpp commit being built against.
-          SUBMODULE_SHA=$(git submodule status llama.cpp 2>/dev/null | awk '{print $1}' | tr -d '+-' || echo none)
+          # Read the recorded SHA from the parent tree directly (the submodule
+          # working tree may not be checked out yet — submodules: false above).
+          SUBMODULE_SHA=$(git ls-tree HEAD llama.cpp | awk '{print $3}')
           # Input file content hash captures bench.cpp, CMake flags, build script.
           INPUTS_SHA=$(cat bench.cpp CMakeLists.txt build.sh | sha256sum | cut -d' ' -f1)
           KEY="wasm-v1-${INPUTS_SHA}-${SUBMODULE_SHA}"
