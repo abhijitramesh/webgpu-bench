@@ -1,4 +1,4 @@
-import { loadData, filterResults, selectBestResults, expandCpuRows, withSyntheticCpuRows } from './data.js';
+import { loadData, filterResults, selectBestResults, expandCpuRows, attachCpuBaselineFromCpuRecords } from './data.js';
 import { initFilters, populateQuantOptions, getFilters, resetFilters } from './filters.js';
 import { renderDecodeChart, renderPrefillChart, renderSizeChart, renderMachineChart, renderCpuGpuChart, renderSpeedupChart } from './charts.js';
 import { renderResultsTable, renderErrorTable, renderMachineInfo, renderCpuGpuTable } from './tables.js';
@@ -76,17 +76,14 @@ function render() {
   Chart.defaults.plugins.tooltip.bodyColor = isDark ? '#a1a1aa' : '#71717a';
 
   const filters = getFilters();
-  // Filter, then collapse to one canonical row per
-  // (machine, browser, model, variant, backend). Multiple users may submit
-  // results for the same hardware bucket; this keeps the row with the
-  // highest iteration count (tiebreak: most recent) so the leaderboard
-  // shows the most reliable number per cell rather than averaging noisy
-  // duplicates. withSyntheticCpuRows expands each browser-flow record's
-  // cpu_baseline_* into a sibling CPU row so CPU runs (CLI or browser)
-  // appear as their own row in the main table.
+  // Filter, attach CPU baseline values (folds CLI-flow CPU records onto
+  // their GPU sibling so both submission paths produce one row per cell),
+  // collapse to one canonical row per (machine, browser, model, variant,
+  // backend), then drop the now-redundant CPU rows. The CPU numbers stay
+  // visible via the cpu_baseline_* columns on each GPU row.
   const filtered = selectBestResults(
-    withSyntheticCpuRows(filterResults(appData.results, filters)),
-  );
+    attachCpuBaselineFromCpuRecords(filterResults(appData.results, filters)),
+  ).filter(r => r.nGpuLayers !== 0);
 
   // Summary cards — counts tween from previous value to new on filter changes
   // and from 0 on first paint (since `data-value` defaults to "0").

@@ -160,6 +160,40 @@ export function selectBestResults(records) {
   return [...bestByCell.values()];
 }
 
+/* For CLI-flow records that ship CPU and GPU as separate dataset entries,
+   look up each GPU record's matching CPU companion (same machine, browser,
+   model, variant) and copy its perf into cpu_baseline_*. After this pass,
+   GPU records from both submission paths (browser, CLI) carry their CPU
+   baseline inline, so the main table can render a single row per cell with
+   both numbers side-by-side. No-op on records that already have
+   cpu_baseline_* (e.g. browser-flow records, where controller.makeRecord
+   embeds it at write time). */
+export function attachCpuBaselineFromCpuRecords(results) {
+  const cpuByCell = new Map();
+  for (const r of results) {
+    if (r.nGpuLayers === 0 && r.status === 'done' && (r.decode_tok_s != null || r.prefill_tok_s != null)) {
+      const key = `${r.machineSlug}|${r.browser}|${r.model}|${r.variant}`;
+      const cur = cpuByCell.get(key);
+      // Most-recent wins on tiebreak — matches selectBestResults() semantics.
+      if (!cur || (r.timestamp || '') > (cur.timestamp || '')) {
+        cpuByCell.set(key, r);
+      }
+    }
+  }
+  return results.map(r => {
+    if (r.nGpuLayers === 0) return r;
+    if (r.cpu_baseline_decode_tok_s != null || r.cpu_baseline_prefill_tok_s != null) return r;
+    const key = `${r.machineSlug}|${r.browser}|${r.model}|${r.variant}`;
+    const cpu = cpuByCell.get(key);
+    if (!cpu) return r;
+    return {
+      ...r,
+      cpu_baseline_decode_tok_s: cpu.decode_tok_s ?? null,
+      cpu_baseline_prefill_tok_s: cpu.prefill_tok_s ?? null,
+    };
+  });
+}
+
 /* Synthesize a CPU row for every browser-flow GPU record (the in-page
    bench measures one CPU pass per variant alongside the GPU iterations
    and stamps the result on the same record via cpu_baseline_*). Returns

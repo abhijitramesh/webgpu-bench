@@ -8,7 +8,7 @@ const NUM_KEYS = new Set([
   'sizeMB', 'decode_tok_s', 'prefill_tok_s',
   'cpu_baseline_decode_tok_s', 'cpu_baseline_prefill_tok_s',
   'n_eval', 't_eval_ms',
-  'n_p_eval', 't_p_eval_ms', 'wallTimeMs', 'consistency_rate', 'nGpuLayers',
+  'n_p_eval', 't_p_eval_ms', 'wallTimeMs', 'consistency_rate',
 ]);
 
 function sortResults(results, key, dir) {
@@ -72,7 +72,6 @@ export function renderResultsTable(results) {
     { key: 'sizeMB', label: 'Size (MB)', priority: 3 },
     { key: 'browser', label: 'Browser', priority: 2 },
     { key: 'submittedBy', label: 'Submitter', priority: 2 },
-    { key: 'nGpuLayers', label: 'Backend', priority: 2 },
     { key: 'status', label: 'Status', priority: 1 },
     { key: 'buildType', label: 'Build', priority: 3 },
     { key: 'webgpuAvailable', label: 'WebGPU', priority: 3 },
@@ -116,14 +115,6 @@ export function renderResultsTable(results) {
           html += r.status === 'done'
             ? '<span class="badge badge--pass">PASS</span>'
             : '<span class="badge badge--fail">FAIL</span>';
-          break;
-        case 'nGpuLayers':
-          if (r.nGpuLayers != null) {
-            const isCpu = r.nGpuLayers === 0;
-            html += `<span class="badge ${isCpu ? 'badge--cpu' : 'badge--webgpu'}">${isCpu ? 'CPU' : 'WebGPU'}</span>`;
-          } else {
-            html += '<span class="text-muted">\u2014</span>';
-          }
           break;
         case 'webgpuAvailable':
           html += r.webgpuAvailable
