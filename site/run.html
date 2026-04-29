@@ -125,7 +125,15 @@
               </div>
             </div>
             <div class="filter-group">
-              <label class="filter-label" for="iterations-input">Iterations</label>
+              <label class="filter-label" for="n-prompt-input">Prompt tokens (-p)</label>
+              <input type="number" id="n-prompt-input" class="filter-select run-iter-input" value="512" min="0" max="4096" step="1">
+            </div>
+            <div class="filter-group">
+              <label class="filter-label" for="n-gen-input">Gen tokens (-n)</label>
+              <input type="number" id="n-gen-input" class="filter-select run-iter-input" value="128" min="0" max="4096" step="1">
+            </div>
+            <div class="filter-group">
+              <label class="filter-label" for="iterations-input">Reps (-r)</label>
               <input type="number" id="iterations-input" class="filter-select run-iter-input" value="5" min="1" max="50" step="1">
             </div>
           </div>

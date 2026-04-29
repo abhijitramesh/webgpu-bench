@@ -6,7 +6,9 @@
 #include "ggml.h"
 #include "ggml-backend.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -325,6 +327,91 @@ const char* bench_eval_tokens(const char* prompt, const char* ref_ids_csv) {
         matches_str.c_str()
     );
 
+    return g_result_buf;
+}
+
+// llama-bench-style synthetic-token prefill test. Mirrors test_prompt() in
+// tools/llama-bench/llama-bench.cpp: BOS as the first token (when the vocab
+// expects one) and uniformly-random fillers thereafter, batched up to n_ctx.
+// Caller times the call; we just clear the KV, run the work, synchronize, and
+// return. Unlike bench_run there is no sampler involvement.
+const char * bench_pp(int n_prompt) {
+    if (!g_model || !g_ctx) {
+        snprintf(g_result_buf, sizeof(g_result_buf),
+            "{\"error\":\"model not loaded\"}");
+        return g_result_buf;
+    }
+    if (n_prompt <= 0) {
+        snprintf(g_result_buf, sizeof(g_result_buf),
+            "{\"error\":\"n_prompt must be > 0\"}");
+        return g_result_buf;
+    }
+
+    llama_memory_clear(llama_get_memory(g_ctx), false);
+
+    const int32_t n_vocab = llama_vocab_n_tokens(g_vocab);
+    const int n_batch = g_n_ctx;  // ctx_params.n_batch is set to n_ctx in bench_load
+    std::vector<llama_token> tokens(n_batch);
+
+    int n_processed = 0;
+    while (n_processed < n_prompt) {
+        const int n_tokens = std::min(n_prompt - n_processed, n_batch);
+        tokens[0] = (n_processed == 0 && llama_vocab_get_add_bos(g_vocab))
+            ? llama_vocab_bos(g_vocab)
+            : std::rand() % n_vocab;
+        for (int i = 1; i < n_tokens; i++) {
+            tokens[i] = std::rand() % n_vocab;
+        }
+        if (llama_decode(g_ctx, llama_batch_get_one(tokens.data(), n_tokens))) {
+            snprintf(g_result_buf, sizeof(g_result_buf),
+                "{\"error\":\"prefill decode failed at processed=%d\"}", n_processed);
+            return g_result_buf;
+        }
+        n_processed += n_tokens;
+    }
+    llama_synchronize(g_ctx);
+
+    snprintf(g_result_buf, sizeof(g_result_buf),
+        "{\"success\":true,\"n_prompt\":%d}", n_prompt);
+    return g_result_buf;
+}
+
+// llama-bench-style decode test. Mirrors test_gen() in
+// tools/llama-bench/llama-bench.cpp: prime with BOS (or a random token if the
+// vocab doesn't expect BOS), then loop n_gen single-token decodes with a
+// synchronize after each one — the synchronize is what makes wall time
+// reflect per-token GPU latency rather than dispatch queue depth.
+const char * bench_tg(int n_gen) {
+    if (!g_model || !g_ctx) {
+        snprintf(g_result_buf, sizeof(g_result_buf),
+            "{\"error\":\"model not loaded\"}");
+        return g_result_buf;
+    }
+    if (n_gen <= 0) {
+        snprintf(g_result_buf, sizeof(g_result_buf),
+            "{\"error\":\"n_gen must be > 0\"}");
+        return g_result_buf;
+    }
+
+    llama_memory_clear(llama_get_memory(g_ctx), false);
+
+    const int32_t n_vocab = llama_vocab_n_tokens(g_vocab);
+    llama_token token = llama_vocab_get_add_bos(g_vocab)
+        ? llama_vocab_bos(g_vocab)
+        : std::rand() % n_vocab;
+
+    for (int i = 0; i < n_gen; i++) {
+        if (llama_decode(g_ctx, llama_batch_get_one(&token, 1))) {
+            snprintf(g_result_buf, sizeof(g_result_buf),
+                "{\"error\":\"decode failed at token %d\"}", i);
+            return g_result_buf;
+        }
+        llama_synchronize(g_ctx);
+        token = std::rand() % n_vocab;
+    }
+
+    snprintf(g_result_buf, sizeof(g_result_buf),
+        "{\"success\":true,\"n_gen\":%d}", n_gen);
     return g_result_buf;
 }
 

@@ -39,6 +39,19 @@ function parseArgs() {
     noCache: false,
     consistency: false,
     resume: false,
+    noWarmup: false,
+    nPrompt: null,
+    nGen: null,
+    nReps: null,
+  };
+
+  const intArg = (arg, name) => {
+    const raw = arg.split('=')[1];
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new Error(`${name} must be a non-negative integer (got "${raw}")`);
+    }
+    return n;
   };
 
   for (const arg of args) {
@@ -52,6 +65,14 @@ function parseArgs() {
       parsed.consistency = true;
     } else if (arg === '--resume') {
       parsed.resume = true;
+    } else if (arg === '--no-warmup') {
+      parsed.noWarmup = true;
+    } else if (arg.startsWith('--n-prompt=')) {
+      parsed.nPrompt = intArg(arg, '--n-prompt');
+    } else if (arg.startsWith('--n-gen=')) {
+      parsed.nGen = intArg(arg, '--n-gen');
+    } else if (arg.startsWith('--n-reps=')) {
+      parsed.nReps = intArg(arg, '--n-reps');
     } else if (arg.startsWith('--browsers=')) {
       parsed.browsers = arg.split('=')[1].split(',');
     } else if (arg.startsWith('--variants=')) {
@@ -101,9 +122,14 @@ export function getConfig() {
     // Model config (repo is now per-variant from models.json)
     MODEL_VARIANTS: variants,
 
-    // Inference config
+    // Consistency phase (real prompt → forced-decoding vs CPU baseline)
     PROMPT: '<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\nExplain quantum computing in simple terms.<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n',
     N_PREDICT: 128,
+    // Perf phase (synthetic-token llama-bench-style pp / tg)
+    N_PROMPT: args.nPrompt ?? 512,
+    N_GEN:    args.nGen    ?? 128,
+    N_REPS:   args.nReps   ?? 5,
+    NO_WARMUP: args.noWarmup || false,
     N_CTX: 2048,
     N_GPU_LAYERS: args.noWebgpu ? 0 : 999,
 

@@ -120,6 +120,13 @@ async function fetchRunsBatch(datasetRepo, files) {
    produces. Keep field-for-field aligned with build-site.js so the merged
    results are indistinguishable from the baseline. */
 function flattenForDashboard(r, slug) {
+  // New-format records have metrics.tests = [{name:'pp512',...},{name:'tg128',...}].
+  // Old-format records have flat metrics.prefill_tok_s / decode_tok_s only.
+  // Surface both shapes so the table can render llama-bench-style "avg \u00b1 stddev"
+  // when stddev is available without breaking on older rows.
+  const tests = Array.isArray(r.metrics?.tests) ? r.metrics.tests : null;
+  const pp = tests?.find(t => t.name?.startsWith('pp')) || null;
+  const tg = tests?.find(t => t.name?.startsWith('tg')) || null;
   return {
     machineSlug: slug,
     timestamp: r.timestamp,
@@ -137,6 +144,13 @@ function flattenForDashboard(r, slug) {
     wallTimeMs: r.wallTimeMs,
     prefill_tok_s: r.metrics?.prefill_tok_s ?? null,
     decode_tok_s: r.metrics?.decode_tok_s ?? null,
+    // llama-bench shape: per-test stddev + the test labels (pp{N} / tg{N})
+    prefill_stddev_ts: pp?.stddev_ts ?? r.metrics?.prefill_tok_s_stdev ?? null,
+    decode_stddev_ts:  tg?.stddev_ts ?? r.metrics?.decode_tok_s_stdev  ?? null,
+    pp_test_name: pp?.name ?? null,
+    tg_test_name: tg?.name ?? null,
+    pp_n_prompt: pp?.n_prompt ?? r.nPrompt ?? null,
+    tg_n_gen:    tg?.n_gen    ?? r.nGen    ?? null,
     n_p_eval: r.metrics?.n_p_eval ?? null,
     t_p_eval_ms: r.metrics?.t_p_eval_ms ?? null,
     n_eval: r.metrics?.n_eval ?? null,

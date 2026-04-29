@@ -22,7 +22,9 @@ const DEFAULT_N_PREDICT = 128;
 const DEFAULT_N_CTX = 2048;
 const DEFAULT_N_GPU_LAYERS = 999;
 const YIELD_BETWEEN_RUNS_MS = 500;
-const YIELD_BETWEEN_ITERATIONS_MS = 200;
+// llama-bench defaults: -p 512 -n 128 -r 5
+const DEFAULT_N_PROMPT = 512;
+const DEFAULT_N_GEN = 128;
 const DEFAULT_ITERATIONS = 5;
 const MIN_ITERATIONS_FOR_SUBMIT = 5;
 
@@ -39,6 +41,8 @@ const state = {
   results: [],         // result records from the current session
   hfSession: null,     // { accessToken, expiresAt, userName } when signed in
   iterations: DEFAULT_ITERATIONS,
+  nPrompt: DEFAULT_N_PROMPT,
+  nGen: DEFAULT_N_GEN,
   mounted: false,
   // Tracks variants the Run pipeline downloaded this session (as opposed to
   // the standalone Download button or pre-existing cache). Only these are
@@ -628,15 +632,34 @@ function wireBatchSelect() {
   });
 }
 
-function wireIterationsInput() {
-  const el = $('iterations-input');
-  if (!el) return;
-  el.value = String(state.iterations);
-  el.addEventListener('change', () => {
-    const n = Math.max(1, Math.min(50, parseInt(el.value, 10) || DEFAULT_ITERATIONS));
-    state.iterations = n;
-    el.value = String(n);
-  });
+function wirePerfInputs() {
+  const reps = $('iterations-input');
+  if (reps) {
+    reps.value = String(state.iterations);
+    reps.addEventListener('change', () => {
+      const n = Math.max(1, Math.min(50, parseInt(reps.value, 10) || DEFAULT_ITERATIONS));
+      state.iterations = n;
+      reps.value = String(n);
+    });
+  }
+  const np = $('n-prompt-input');
+  if (np) {
+    np.value = String(state.nPrompt);
+    np.addEventListener('change', () => {
+      const n = Math.max(0, Math.min(4096, parseInt(np.value, 10)));
+      state.nPrompt = Number.isFinite(n) ? n : DEFAULT_N_PROMPT;
+      np.value = String(state.nPrompt);
+    });
+  }
+  const ng = $('n-gen-input');
+  if (ng) {
+    ng.value = String(state.nGen);
+    ng.addEventListener('change', () => {
+      const n = Math.max(0, Math.min(4096, parseInt(ng.value, 10)));
+      state.nGen = Number.isFinite(n) ? n : DEFAULT_N_GEN;
+      ng.value = String(state.nGen);
+    });
+  }
 }
 
 function submittableResults() {
@@ -767,8 +790,8 @@ function ensureProgressTable() {
           <th>Model</th>
           <th>Variant</th>
           <th>Status</th>
-          <th class="num">Prefill tok/s</th>
-          <th class="num">Decode tok/s</th>
+          <th class="num" title="Prompt processing throughput (avg \u00b1 stddev t/s)">pp tok/s</th>
+          <th class="num" title="Text generation throughput (avg \u00b1 stddev t/s)">tg tok/s</th>
           <th class="num">Wall s</th>
           <th>Error</th>
         </tr>
@@ -815,11 +838,21 @@ function progressRowFor(v) {
     fillFromRecord(record) {
       tr.className = `run-row-${record.status === 'done' ? 'ok' : 'error'}`;
       tr.querySelector('.status').textContent = record.status;
-      tr.querySelector('.prefill').textContent = record.metrics?.prefill_tok_s ?? '—';
-      tr.querySelector('.decode').textContent = record.metrics?.decode_tok_s ?? '—';
+      // Format llama-bench style: "avg \u00b1 stddev" with the test name as
+      // the cell tooltip so users see the exact pp/tg N that was measured.
+      const tests = record.metrics?.tests || [];
+      const pp = tests.find(t => t.name?.startsWith('pp'));
+      const tg = tests.find(t => t.name?.startsWith('tg'));
+      const fmt = (t) => t ? `${t.avg_ts.toFixed(2)} \u00b1 ${t.stddev_ts.toFixed(2)}` : '\u2014';
+      const ppCell = tr.querySelector('.prefill');
+      ppCell.textContent = fmt(pp);
+      if (pp) ppCell.title = pp.name;
+      const tgCell = tr.querySelector('.decode');
+      tgCell.textContent = fmt(tg);
+      if (tg) tgCell.title = tg.name;
       tr.querySelector('.wall').textContent = record.wallTimeMs
         ? (record.wallTimeMs / 1000).toFixed(1)
-        : '—';
+        : '\u2014';
       tr.querySelector('.err').textContent = record.error || '';
     },
   };
@@ -1209,12 +1242,19 @@ async function runBenchmarkInWorker(v, params, callbacks) {
   const record = await runInWorker({
     params: {
       buildType: 'Suspending' in WebAssembly ? 'jspi' : 'asyncify',
-      prompt: params.prompt,
-      nPredict: params.nPredict,
+      contentLength: fetched.contentLength,
+      // Model load
       nCtx: params.nCtx,
       nGpuLayers: params.nGpuLayers,
-      refTokenIds: params.refTokenIds,
-      contentLength: fetched.contentLength,
+      // Consistency phase — empty consistencyPrompt skips it
+      consistencyPrompt: params.consistencyPrompt || '',
+      consistencyNPredict: params.consistencyNPredict || DEFAULT_N_PREDICT,
+      refTokenIds: params.refTokenIds || null,
+      // Perf phase — set both to 0 to skip
+      nPrompt: params.nPrompt ?? 0,
+      nGen:    params.nGen    ?? 0,
+      nReps:   params.nReps   ?? DEFAULT_ITERATIONS,
+      noWarmup: !!params.noWarmup,
     },
     stream: fetched.stream,
     onStatus: callbacks.onStatus,
@@ -1225,22 +1265,29 @@ async function runBenchmarkInWorker(v, params, callbacks) {
   return record;
 }
 
-// Runs one variant: CPU baseline (1x, for reference token IDs + consistency),
-// then N GPU iterations (consistency check on the first only to save time).
+// Runs one variant: CPU consistency baseline (one model load, generates
+// reference token IDs via bench_run), then GPU pass (one model load that
+// does both consistency forced-decoding and the llama-bench-style perf
+// sweep — pp + tg with warmup + nReps timed reps each).
 // Returns an aggregate that makeRecord consumes.
 async function runVariantWithIterations(v, row) {
-  const iterations = Math.max(1, state.iterations || DEFAULT_ITERATIONS);
+  const nReps = Math.max(1, state.iterations || DEFAULT_ITERATIONS);
+  const nPrompt = Math.max(0, state.nPrompt ?? DEFAULT_N_PROMPT);
+  const nGen = Math.max(0, state.nGen ?? DEFAULT_N_GEN);
 
   // ─── CPU baseline ───
+  // Pure consistency pass — capture token_ids; no perf metrics on CPU.
   row.setStatus('cpu-baseline', 'generating reference tokens');
   let cpuResult;
   try {
     cpuResult = await runBenchmarkInWorker(v, {
-      prompt: DEFAULT_PROMPT,
-      nPredict: DEFAULT_N_PREDICT,
+      consistencyPrompt: DEFAULT_PROMPT,
+      consistencyNPredict: DEFAULT_N_PREDICT,
+      refTokenIds: null,
+      nPrompt: 0,
+      nGen: 0,
       nCtx: DEFAULT_N_CTX,
       nGpuLayers: 0,
-      refTokenIds: null,
     }, {
       onStatus: (status, msg) => row.setStatus(`cpu/${status}`, msg),
       onProgress: (fr, downloaded, total) => row.setProgress(fr, downloaded, total),
@@ -1251,113 +1298,94 @@ async function runVariantWithIterations(v, row) {
   }
 
   // CPU baseline is "best effort": if it fails (typically OOM on a tight
-  // tab), keep going with GPU runs but skip the consistency check, since
-  // we'd have no reference token IDs to compare against. The user still
-  // gets prefill/decode metrics — just no agreement-rate number.
+  // tab), keep going with the GPU pass but skip consistency. Perf metrics
+  // are independent of consistency so they're still reported.
   const cpuOk = cpuResult.status === 'done';
   if (!cpuOk) {
     logLine(
-      `CPU baseline failed (${cpuResult.error || 'unknown'}) — proceeding with GPU runs, skipping consistency check.`
+      `CPU baseline failed (${cpuResult.error || 'unknown'}) — proceeding with GPU run, skipping consistency check.`
     );
     row.setStatus('cpu-skipped', 'continuing with GPU only');
   }
 
-  const refTokenIds = cpuOk ? (cpuResult.metrics?.token_ids || []).join(',') : '';
+  const refTokenIds = cpuOk ? (cpuResult.consistency?.token_ids || []).join(',') : '';
 
-  // ─── GPU iterations ───
-  const gpuSamples = [];
-  let consistency = null;
-  let gpuCore = null;
+  if (state.aborted) {
+    return { status: 'error', error: 'aborted', cpu: cpuResult, gpu: null };
+  }
 
-  for (let i = 0; i < iterations; i++) {
-    if (state.aborted) break;
-    row.setStatus('gpu-run', `iteration ${i + 1}/${iterations}`);
-    let gpuResult;
-    try {
-      gpuResult = await runBenchmarkInWorker(v, {
-        prompt: DEFAULT_PROMPT,
-        nPredict: DEFAULT_N_PREDICT,
-        nCtx: DEFAULT_N_CTX,
-        nGpuLayers: DEFAULT_N_GPU_LAYERS,
-        refTokenIds: i === 0 ? (refTokenIds || null) : null,
-      }, {
-        onStatus: (s, m) => row.setStatus(`gpu${i + 1}/${s}`, m),
-        onProgress: (fr, d, t) => row.setProgress(fr, d, t),
-        onLog: logLine,
-      });
-    } catch (err) {
-      gpuResult = { status: 'error', error: err.message || String(err) };
-    }
-
-    if (gpuResult.status !== 'done') {
-      return {
-        status: 'error',
-        error: `GPU iteration ${i + 1} failed: ${gpuResult.error || 'unknown'}`,
-        iterations: gpuSamples.length,
-        cpu: cpuResult,
-        gpuSamples,
-        consistency,
-        gpuCore: gpuCore || gpuResult,
-      };
-    }
-
-    gpuSamples.push({
-      prefill_tok_s: gpuResult.metrics?.prefill_tok_s ?? 0,
-      decode_tok_s: gpuResult.metrics?.decode_tok_s ?? 0,
-      n_p_eval: gpuResult.metrics?.n_p_eval ?? 0,
-      n_eval: gpuResult.metrics?.n_eval ?? 0,
-      t_p_eval_ms: gpuResult.metrics?.t_p_eval_ms ?? 0,
-      t_eval_ms: gpuResult.metrics?.t_eval_ms ?? 0,
+  // ─── GPU pass: consistency + perf in one model load ───
+  row.setStatus('gpu-run', 'loading model');
+  let gpuResult;
+  try {
+    gpuResult = await runBenchmarkInWorker(v, {
+      consistencyPrompt: DEFAULT_PROMPT,
+      consistencyNPredict: DEFAULT_N_PREDICT,
+      refTokenIds: refTokenIds || null,
+      nPrompt,
+      nGen,
+      nReps,
+      nCtx: DEFAULT_N_CTX,
+      nGpuLayers: DEFAULT_N_GPU_LAYERS,
+    }, {
+      onStatus: (s, m) => row.setStatus(`gpu/${s}`, m),
+      onProgress: (fr, d, t) => row.setProgress(fr, d, t),
+      onLog: logLine,
     });
-    if (i === 0) {
-      consistency = gpuResult.consistency || null;
-      gpuCore = gpuResult;
-    }
-
-    await sleep(YIELD_BETWEEN_ITERATIONS_MS);
+  } catch (err) {
+    gpuResult = { status: 'error', error: err.message || String(err) };
   }
 
   return {
-    status: gpuSamples.length > 0 ? 'done' : 'error',
-    error: gpuSamples.length === 0 ? 'no GPU iterations completed' : null,
-    iterations: gpuSamples.length,
+    status: gpuResult.status === 'done' ? 'done' : 'error',
+    error: gpuResult.status === 'done' ? null : (gpuResult.error || 'GPU run failed'),
     cpu: cpuResult,
-    gpuSamples,
-    consistency,
-    gpuCore,
+    gpu: gpuResult,
   };
 }
 
-function mean(arr, key) {
-  if (arr.length === 0) return 0;
-  return arr.reduce((a, x) => a + (x[key] || 0), 0) / arr.length;
-}
-function stdev(arr, key) {
-  if (arr.length < 2) return 0;
-  const m = mean(arr, key);
-  return Math.sqrt(arr.reduce((a, x) => a + ((x[key] || 0) - m) ** 2, 0) / arr.length);
-}
 function round2(n) { return Number.isFinite(n) ? parseFloat(n.toFixed(2)) : 0; }
 
+// Pull pp/tg test results out of a metrics.tests array. Returns null if the
+// requested test wasn't run (e.g. nPrompt=0 means no pp test).
+function findTest(tests, prefix) {
+  if (!Array.isArray(tests)) return null;
+  return tests.find(t => typeof t.name === 'string' && t.name.startsWith(prefix)) || null;
+}
+
 function makeRecord(v, vr, machine, browser, wallTimeMs) {
-  const first = vr.gpuSamples[0] || {};
-  const metrics = vr.gpuSamples.length > 0 ? {
-    prefill_tok_s: round2(mean(vr.gpuSamples, 'prefill_tok_s')),
-    decode_tok_s: round2(mean(vr.gpuSamples, 'decode_tok_s')),
-    prefill_tok_s_stdev: round2(stdev(vr.gpuSamples, 'prefill_tok_s')),
-    decode_tok_s_stdev: round2(stdev(vr.gpuSamples, 'decode_tok_s')),
-    prefill_samples: vr.gpuSamples.map(s => round2(s.prefill_tok_s)),
-    decode_samples: vr.gpuSamples.map(s => round2(s.decode_tok_s)),
-    iterations: vr.iterations,
-    n_p_eval: first.n_p_eval,
-    n_eval: first.n_eval,
-    t_p_eval_ms: first.t_p_eval_ms,
-    t_eval_ms: first.t_eval_ms,
+  const gpu = vr.gpu;
+  const tests = gpu?.metrics?.tests || null;
+  const pp = findTest(tests, 'pp');
+  const tg = findTest(tests, 'tg');
+
+  // Llama-bench shape lives under metrics.tests; flat prefill_tok_s /
+  // decode_tok_s are kept for backward compat with the existing dashboard
+  // table cells until those are migrated to read from tests directly.
+  const metrics = tests ? {
+    tests,
+    n_prompt: gpu.metrics.n_prompt,
+    n_gen: gpu.metrics.n_gen,
+    n_reps: gpu.metrics.n_reps,
+    iterations: gpu.metrics.n_reps,
+    prefill_tok_s: pp ? round2(pp.avg_ts) : 0,
+    decode_tok_s:  tg ? round2(tg.avg_ts) : 0,
+    prefill_tok_s_stdev: pp ? round2(pp.stddev_ts) : 0,
+    decode_tok_s_stdev:  tg ? round2(tg.stddev_ts) : 0,
+    prefill_samples: pp ? pp.samples_ts : [],
+    decode_samples:  tg ? tg.samples_ts : [],
+    n_p_eval: pp ? pp.n_prompt : 0,
+    n_eval:   tg ? tg.n_gen    : 0,
+    t_p_eval_ms: pp ? round2(pp.avg_ns / 1e6) : 0,
+    t_eval_ms:   tg ? round2(tg.avg_ns / 1e6) : 0,
   } : null;
 
-  const cpuBaseline = vr.cpu?.status === 'done' && vr.cpu.metrics ? {
-    prefill_tok_s: vr.cpu.metrics.prefill_tok_s,
-    decode_tok_s: vr.cpu.metrics.decode_tok_s,
+  const cpuBaseline = vr.cpu?.status === 'done' && vr.cpu.consistency?.token_ids?.length ? {
+    // CPU pass no longer measures perf — only token_ids for consistency.
+    // Keep the field present but null-valued so dashboards that look it up
+    // don't crash; downstream code can treat null as "not measured".
+    prefill_tok_s: null,
+    decode_tok_s: null,
   } : null;
 
   return {
@@ -1371,21 +1399,24 @@ function makeRecord(v, vr, machine, browser, wallTimeMs) {
     browser,
     nCtx: DEFAULT_N_CTX,
     nPredict: DEFAULT_N_PREDICT,
+    nPrompt: gpu?.metrics?.n_prompt ?? 0,
+    nGen: gpu?.metrics?.n_gen ?? 0,
+    nReps: gpu?.metrics?.n_reps ?? 0,
     nGpuLayers: DEFAULT_N_GPU_LAYERS,
     timestamp: new Date().toISOString(),
     wallTimeMs,
-    webgpuAvailable: vr.gpuCore?.webgpuAvailable ?? !!navigator.gpu,
-    gpuAdapterInfo: vr.gpuCore?.gpuAdapterInfo ?? null,
-    buildType: vr.gpuCore?.buildType ?? null,
+    webgpuAvailable: gpu?.webgpuAvailable ?? !!navigator.gpu,
+    gpuAdapterInfo: gpu?.gpuAdapterInfo ?? null,
+    buildType: gpu?.buildType ?? null,
     // llama.cpp version stamped from build-info.json. Lets us correlate
     // result drift with llama.cpp upgrades over time.
     llamaCppCommit: state.buildInfo?.llamaCppCommit ?? null,
     llamaCppDescribe: state.buildInfo?.llamaCppDescribe ?? null,
     dawnTag: state.buildInfo?.dawnTag ?? null,
     metrics,
-    consistency: vr.consistency ?? null,
+    consistency: gpu?.consistency ?? null,
     cpu_baseline: cpuBaseline,
-    output: vr.gpuCore?.output || '',
+    output: gpu?.output || '',
     machine,
     source: `webgpu-bench/site (${state.surface})`,
   };
@@ -1501,11 +1532,16 @@ function generateMarkdown(results) {
   let body = '';
   if (passed.length) {
     body += `## Passed (${passed.length})\n\n`;
-    body += `| Model | Variant | Size | Prefill tok/s | Decode tok/s | Wall s |\n`;
+    // llama-bench-style markdown: separate pp / tg columns with avg \u00b1 stddev.
+    body += `| Model | Variant | Size | pp tok/s | tg tok/s | Wall s |\n`;
     body += `|---|---|---:|---:|---:|---:|\n`;
+    const fmtTest = (tests, prefix) => {
+      const t = tests?.find(x => x.name?.startsWith(prefix));
+      return t ? `${t.avg_ts.toFixed(2)} \u00b1 ${t.stddev_ts.toFixed(2)} (${t.name})` : '\u2014';
+    };
     for (const r of passed) {
       body += `| ${r.model} | ${r.variant} | ${formatSize(r.sizeMB)} | ${
-        r.metrics?.prefill_tok_s ?? '—'} | ${r.metrics?.decode_tok_s ?? '—'} | ${
+        fmtTest(r.metrics?.tests, 'pp')} | ${fmtTest(r.metrics?.tests, 'tg')} | ${
         (r.wallTimeMs / 1000).toFixed(1)} |\n`;
     }
     body += `\n`;
@@ -1707,7 +1743,7 @@ export async function mountRunSection() {
   wireFilters();
   wireFamilySearch();
   wireBatchSelect();
-  wireIterationsInput();
+  wirePerfInputs();
   wireRunHandlers();
   wireAbortHandler();
   wirePurgeHandler();

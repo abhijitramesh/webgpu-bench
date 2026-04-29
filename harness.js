@@ -21,13 +21,22 @@ window.addEventListener('unhandledrejection', (e) => {
 
 (async function () {
   const params = new URLSearchParams(window.location.search);
-  const modelFile   = params.get('model')        || '';
-  const hfRepo      = params.get('hfRepo')       || 'unsloth/Llama-3.2-1B-Instruct-GGUF';
-  const prompt      = params.get('prompt')       || 'Hello, how are you?';
-  const nPredict    = parseInt(params.get('nPredict')   || '128', 10);
-  const nCtx        = parseInt(params.get('nCtx')       || '2048', 10);
-  const nGpuLayers  = parseInt(params.get('nGpuLayers') || '999', 10);
-  const refTokenIds = params.get('refTokenIds') || null;
+  const modelFile           = params.get('model')         || '';
+  const hfRepo              = params.get('hfRepo')        || 'unsloth/Llama-3.2-1B-Instruct-GGUF';
+  const consistencyPrompt   = params.get('prompt')        || 'Hello, how are you?';
+  const consistencyNPredict = parseInt(params.get('nPredict')   || '128', 10);
+  const nPrompt             = parseInt(params.get('nPrompt')    || '512', 10);
+  const nGen                = parseInt(params.get('nGen')       || '128', 10);
+  const nReps               = parseInt(params.get('nReps')      || '5', 10);
+  const nCtx                = parseInt(params.get('nCtx')       || '2048', 10);
+  const nGpuLayers          = parseInt(params.get('nGpuLayers') || '999', 10);
+  const refTokenIds         = params.get('refTokenIds') || null;
+  // mode=perf → skip consistency entirely (e.g. for the GPU perf-only pass).
+  // mode=consistency → skip perf (e.g. CPU baseline pass that just needs token_ids).
+  // default 'both' runs both phases in one model load.
+  const mode                = params.get('mode') || 'both';
+  const runConsistency      = mode !== 'perf';
+  const runPerf             = mode !== 'consistency';
 
   const hasJspi = 'Suspending' in WebAssembly;
 
@@ -73,7 +82,13 @@ window.addEventListener('unhandledrejection', (e) => {
 
   const result = await runBenchmarkCore({
     source: localSource(),
-    modelFile, hfRepo, prompt, nPredict, nCtx, nGpuLayers, refTokenIds,
+    modelFile, hfRepo,
+    consistencyPrompt, consistencyNPredict, refTokenIds,
+    runConsistency,
+    nPrompt: runPerf ? nPrompt : 0,
+    nGen:    runPerf ? nGen    : 0,
+    nReps,
+    nCtx, nGpuLayers,
     onStatus, onProgress, onLog,
   });
 

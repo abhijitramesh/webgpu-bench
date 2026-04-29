@@ -6,12 +6,15 @@
 //
 //   main → worker: {
 //     type: 'run',
-//     params: { buildType, prompt, nPredict, nCtx, nGpuLayers, refTokenIds,
-//               contentLength },
-//     // Exactly one of these — depends on whether the runtime supports
-//     // transferable ReadableStreams (most desktops do; iOS Safari and some
-//     // mobile Chrome configs don't, in which case the main thread drains
-//     // the stream into an ArrayBuffer and transfers the buffer instead):
+//     params: {
+//       buildType, contentLength,
+//       // model load
+//       nCtx, nGpuLayers,
+//       // consistency phase (set consistencyPrompt to '' to skip)
+//       consistencyPrompt, consistencyNPredict, refTokenIds,
+//       // perf phase
+//       nPrompt, nGen, nReps, noWarmup,
+//     },
 //     stream?: ReadableStream<Uint8Array>,  // TRANSFERRED
 //     buffer?: ArrayBuffer                  // TRANSFERRED (mobile fallback)
 //   }
@@ -25,14 +28,56 @@
 // decode loops ignore signals, and termination is the only reliable way to
 // stop an in-flight WASM call.
 //
-// NOTE ON DUPLICATION: the orchestration below mirrors runBenchmarkCore()
-// in site/js/run/core.js. core.js stays the authoritative main-thread path
-// (used by harness.js + runner.js Playwright harness). When changing one,
-// change the other.
+// NOTE ON DUPLICATION: the orchestration below mirrors runBenchmarkCore() +
+// runBenchActions() in site/js/run/core.js. core.js stays the authoritative
+// main-thread path (used by harness.js + runner.js Playwright harness). When
+// changing one, change the other.
 
 const post = (msg) => self.postMessage(msg);
 const log = (line) => post({ type: 'log', line });
 const status = (s, msg) => post({ type: 'status', status: s, msg });
+
+// Aggregate raw nanosecond samples into the llama-bench result shape.
+// Mirrors core.js buildTest — keep them identical.
+function buildTest(name, n_prompt, n_gen, samples_ns) {
+  const n = samples_ns.length;
+  if (n === 0) {
+    return { name, n_prompt, n_gen, avg_ns: 0, stddev_ns: 0, avg_ts: 0, stddev_ts: 0, samples_ns: [], samples_ts: [] };
+  }
+  const avg_ns = samples_ns.reduce((a, b) => a + b, 0) / n;
+  const var_ns = n > 1
+    ? samples_ns.reduce((a, b) => a + (b - avg_ns) * (b - avg_ns), 0) / (n - 1)
+    : 0;
+  const stddev_ns = Math.sqrt(var_ns);
+  const n_tokens = n_prompt + n_gen;
+  const samples_ts = samples_ns.map(t => t > 0 ? (1e9 * n_tokens) / t : 0);
+  const avg_ts = samples_ts.reduce((a, b) => a + b, 0) / n;
+  const var_ts = n > 1
+    ? samples_ts.reduce((a, b) => a + (b - avg_ts) * (b - avg_ts), 0) / (n - 1)
+    : 0;
+  const stddev_ts = Math.sqrt(var_ts);
+  const round2 = x => Math.round(x * 100) / 100;
+  return {
+    name,
+    n_prompt,
+    n_gen,
+    avg_ns: Math.round(avg_ns),
+    stddev_ns: Math.round(stddev_ns),
+    avg_ts: round2(avg_ts),
+    stddev_ts: round2(stddev_ts),
+    samples_ns: samples_ns.map(Math.round),
+    samples_ts: samples_ts.map(round2),
+  };
+}
+
+function parseBenchResult(label, raw) {
+  let r;
+  try { r = JSON.parse(raw); } catch (e) {
+    throw new Error(`${label}: invalid JSON from C (${e.message})`);
+  }
+  if (r.error) throw new Error(`${label}: ${r.error}`);
+  return r;
+}
 
 self.onmessage = async (e) => {
   const { type } = e.data || {};
@@ -58,12 +103,18 @@ self.onmessage = async (e) => {
 async function runOne({ params, stream, buffer }) {
   const {
     buildType,
-    prompt,
-    nPredict,
+    contentLength,
     nCtx,
     nGpuLayers,
+    // consistency
+    consistencyPrompt,
+    consistencyNPredict,
     refTokenIds,
-    contentLength,
+    // perf
+    nPrompt,
+    nGen,
+    nReps,
+    noWarmup,
   } = params;
   if (!stream && !buffer) {
     throw new Error('runOne: exactly one of `stream` or `buffer` must be provided');
@@ -85,9 +136,6 @@ async function runOne({ params, stream, buffer }) {
     try {
       const adapter = await self.navigator.gpu.requestAdapter();
       if (adapter) {
-        // GPUAdapterInfo is a host object — structured-clone can't serialize
-        // it across postMessage. Copy the fields we care about into a plain
-        // object before storing on result.
         const info = adapter.info;
         result.gpuAdapterInfo = info ? {
           vendor: info.vendor || '',
@@ -118,10 +166,6 @@ async function runOne({ params, stream, buffer }) {
   }
 
   const Module = await self.createBenchModule({
-    // In a worker loaded via importScripts(), Emscripten can't infer the
-    // script's directory and falls back to self.location (this worker's
-    // own URL), which makes it look for bench.wasm next to bench-worker.js.
-    // Pin the lookup to the build directory so it grabs the right file.
     locateFile: (filename) => `/build/${buildType}/${filename}`,
     print: (text) => log(`[wasm] ${text}`),
     printErr: (text) => log(`[wasm:err] ${text}`),
@@ -135,15 +179,6 @@ async function runOne({ params, stream, buffer }) {
   log('WASM module loaded');
 
   // ─── Stream the model into the WASM heap (HeapFS-style) ───
-  // Avoid the JS-side MEMFS staging buffer by allocating space inside the
-  // WASM heap with _malloc and writing chunks directly via HEAPU8.set. Then
-  // register the file with MEMFS using a Uint8Array view backed by the heap
-  // region, so llama.cpp's mmap can take the zero-copy branch in MEMFS.mmap
-  // (which fires when contents.buffer === HEAP8.buffer).
-  //
-  // Heap growth during bench_init/bench_load detaches old views, so we
-  // override node.contents with a getter that always rebuilds the view
-  // from the saved pointer + length against the current Module.HEAPU8.
   if (!(contentLength > 0)) {
     throw new Error('content-length is required for streaming into WASM heap');
   }
@@ -168,10 +203,6 @@ async function runOne({ params, stream, buffer }) {
         post({ type: 'progress', fraction: downloaded / contentLength, downloaded, total: contentLength });
       }
     } else {
-      // Buffered path (mobile fallback): the whole file is already in
-      // memory. Copy it into the WASM heap in one shot. Progress was
-      // emitted on the main thread while buffering, so we just report 100%
-      // here for the loading phase.
       const view = new Uint8Array(buffer);
       if (view.byteLength !== contentLength) {
         log(`warning: buffer size ${view.byteLength} != content-length ${contentLength}`);
@@ -182,21 +213,15 @@ async function runOne({ params, stream, buffer }) {
     }
     log(`Model written to WASM heap @ 0x${modelPtr.toString(16)} (${(downloaded / (1024 * 1024)).toFixed(1)} MB)`);
 
-    // Register as a MEMFS file with a heap-backed view. canOwn=true so MEMFS
-    // doesn't make its own copy.
     const view = new Uint8Array(Module.HEAPU8.buffer, modelPtr, contentLength);
     Module.FS.createDataFile('/', 'model.gguf', view, true, false, true);
 
-    // Replace contents with a getter — heap growth (e.g. when llama.cpp
-    // allocates KV cache) replaces Module.HEAPU8.buffer, which would
-    // detach our static view. The getter rebuilds against the live buffer.
     const node = Module.FS.lookupPath('/model.gguf').node;
     Object.defineProperty(node, 'contents', {
       get: () => new Uint8Array(Module.HEAPU8.buffer, modelPtr, contentLength),
       set: () => { /* read-only file */ },
       configurable: true,
     });
-    // usedBytes is read by MEMFS for stat() — keep it accurate.
     node.usedBytes = contentLength;
   } catch (err) {
     Module._free(modelPtr);
@@ -222,86 +247,109 @@ async function runOne({ params, stream, buffer }) {
   if (loadResult !== 0) throw new Error(`bench_load failed: ${loadResult}`);
   log('Model loaded');
 
-  // Drop the MEMFS node — the bytes themselves stay alive in the WASM heap
-  // because llama.cpp's mmap captured a pointer into our _malloc'd region.
-  // We free that region after bench_exit.
   try {
     Module.FS.unlink('/model.gguf');
   } catch (err) {
     log(`Warning: could not remove model FS node: ${err.message}`);
   }
 
-  // ─── Inference ───
-  status('running', 'Running inference...');
-  const resultJson = await Module.ccall(
-    'bench_run',
-    'string',
-    ['string', 'number'],
-    [prompt, nPredict],
-    { async: true },
-  );
-  log(`bench_run returned: ${String(resultJson).substring(0, 200)}`);
-
-  const inferResult = JSON.parse(resultJson);
-  if (inferResult.error) throw new Error(`Inference error: ${inferResult.error}`);
-
-  const prefillTokS = inferResult.t_p_eval_ms > 0
-    ? (inferResult.n_p_eval / (inferResult.t_p_eval_ms / 1000)).toFixed(2)
-    : 'N/A';
-  const decodeTokS = inferResult.t_eval_ms > 0
-    ? (inferResult.n_eval / (inferResult.t_eval_ms / 1000)).toFixed(2)
-    : 'N/A';
-
-  result.metrics = {
-    ...inferResult,
-    prefill_tok_s: parseFloat(prefillTokS) || 0,
-    decode_tok_s: parseFloat(decodeTokS) || 0,
-  };
-  result.output = inferResult.output || '';
-
-  // ─── Consistency check ───
-  if (refTokenIds && nGpuLayers > 0 && inferResult.token_ids?.length > 0) {
-    log('Running forced-decoding consistency check...');
-    const evalJson = await Module.ccall(
-      'bench_eval_tokens',
-      'string',
-      ['string', 'string'],
-      [prompt, refTokenIds],
+  // ─── Consistency phase ───
+  if (consistencyPrompt) {
+    status('consistency', 'Running consistency check...');
+    log(`bench_run("...", ${consistencyNPredict}) — consistency phase`);
+    const raw = await Module.ccall(
+      'bench_run', 'string',
+      ['string', 'number'],
+      [consistencyPrompt, consistencyNPredict],
       { async: true },
     );
-    const evalResult = JSON.parse(evalJson);
-    if (evalResult.error) {
-      log(`Consistency check error: ${evalResult.error}`);
-    } else {
-      result.consistency = evalResult;
-      log(
-        `Consistency: ${(evalResult.agreement_rate * 100).toFixed(1)}% top-1 agreement (` +
-        `${evalResult.n_agree}/${evalResult.n_tokens} tokens)`,
+    const r = parseBenchResult('bench_run', raw);
+    result.output = r.output || '';
+    result.consistency = { token_ids: r.token_ids || [] };
+
+    if (refTokenIds) {
+      log('bench_eval_tokens — forced-decode vs CPU baseline');
+      const evalRaw = await Module.ccall(
+        'bench_eval_tokens', 'string',
+        ['string', 'string'],
+        [consistencyPrompt, refTokenIds],
+        { async: true },
       );
-      if (evalResult.first_disagreement >= 0) {
-        log(`First disagreement at token position ${evalResult.first_disagreement}`);
-      }
+      const ev = parseBenchResult('bench_eval_tokens', evalRaw);
+      result.consistency = { ...result.consistency, ...ev };
+      log(
+        `Consistency: ${(ev.agreement_rate * 100).toFixed(1)}% top-1 agreement (` +
+        `${ev.n_agree}/${ev.n_tokens})` +
+        (ev.first_disagreement >= 0 ? ` — first diverge @ ${ev.first_disagreement}` : '')
+      );
     }
+  }
+
+  // ─── Perf phase (llama-bench style) ───
+  const wantPp = nPrompt > 0;
+  const wantTg = nGen > 0;
+  if (wantPp || wantTg) {
+    const tests = [];
+
+    if (wantPp) {
+      if (!noWarmup) {
+        status('perf', `warmup pp${nPrompt}`);
+        log(`bench_pp(${nPrompt}) — warmup`);
+        const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
+        parseBenchResult('bench_pp warmup', raw);
+      }
+      const samples_ns = [];
+      for (let i = 0; i < nReps; i++) {
+        status('perf', `pp${nPrompt} ${i + 1}/${nReps}`);
+        const t0 = performance.now();
+        const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
+        const t_ns = (performance.now() - t0) * 1e6;
+        parseBenchResult('bench_pp', raw);
+        samples_ns.push(t_ns);
+        log(`pp${nPrompt} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nPrompt / t_ns).toFixed(1)} t/s)`);
+      }
+      tests.push(buildTest(`pp${nPrompt}`, nPrompt, 0, samples_ns));
+    }
+
+    if (wantTg) {
+      if (!noWarmup) {
+        status('perf', `warmup tg`);
+        log('bench_tg(1) — warmup');
+        const raw = await Module.ccall('bench_tg', 'string', ['number'], [1], { async: true });
+        parseBenchResult('bench_tg warmup', raw);
+      }
+      const samples_ns = [];
+      for (let i = 0; i < nReps; i++) {
+        status('perf', `tg${nGen} ${i + 1}/${nReps}`);
+        const t0 = performance.now();
+        const raw = await Module.ccall('bench_tg', 'string', ['number'], [nGen], { async: true });
+        const t_ns = (performance.now() - t0) * 1e6;
+        parseBenchResult('bench_tg', raw);
+        samples_ns.push(t_ns);
+        log(`tg${nGen} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nGen / t_ns).toFixed(1)} t/s)`);
+      }
+      tests.push(buildTest(`tg${nGen}`, 0, nGen, samples_ns));
+    }
+
+    result.metrics = {
+      tests,
+      n_prompt: wantPp ? nPrompt : 0,
+      n_gen: wantTg ? nGen : 0,
+      n_reps: nReps,
+    };
   }
 
   await Module.ccall('bench_exit', null, [], [], { async: true });
 
-  // Free the heap-resident model bytes now that llama.cpp has unmapped.
   if (modelPtr) {
     Module._free(modelPtr);
     modelPtr = 0;
   }
 
   result.status = 'done';
-  status('done', `Done! Prefill: ${prefillTokS} tok/s | Decode: ${decodeTokS} tok/s`);
-  log(
-    `Prefill: ${prefillTokS} tok/s (${inferResult.n_p_eval} tokens in ` +
-    `${inferResult.t_p_eval_ms.toFixed(0)} ms)`,
-  );
-  log(
-    `Decode:  ${decodeTokS} tok/s (${inferResult.n_eval} tokens in ` +
-    `${inferResult.t_eval_ms.toFixed(0)} ms)`,
-  );
-  log(`Output: ${(inferResult.output || '').substring(0, 200)}`);
+  const summary = result.metrics?.tests
+    ?.map(t => `${t.name}: ${t.avg_ts.toFixed(2)} ± ${t.stddev_ts.toFixed(2)} t/s`)
+    .join(' | ') || 'no perf';
+  status('done', `Done! ${summary}`);
   return result;
 }

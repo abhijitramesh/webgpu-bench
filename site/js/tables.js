@@ -76,10 +76,10 @@ export function renderResultsTable(results) {
     { key: 'status', label: 'Status', priority: 1 },
     { key: 'buildType', label: 'Build', priority: 3 },
     { key: 'webgpuAvailable', label: 'WebGPU', priority: 3 },
-    { key: 'decode_tok_s', label: 'Decode tok/s', priority: 1 },
-    { key: 'prefill_tok_s', label: 'Prefill tok/s', priority: 3 },
-    { key: 'cpu_baseline_decode_tok_s', label: 'CPU decode tok/s', priority: 2 },
-    { key: 'cpu_baseline_prefill_tok_s', label: 'CPU prefill tok/s', priority: 3 },
+    { key: 'decode_tok_s', label: 'tg tok/s', priority: 1 },
+    { key: 'prefill_tok_s', label: 'pp tok/s', priority: 3 },
+    { key: 'cpu_baseline_decode_tok_s', label: 'CPU tg tok/s', priority: 2 },
+    { key: 'cpu_baseline_prefill_tok_s', label: 'CPU pp tok/s', priority: 3 },
     { key: 'n_eval', label: 'n_eval', priority: 3 },
     { key: 't_eval_ms', label: 't_eval (ms)', priority: 3 },
     { key: 'n_p_eval', label: 'n_p_eval', priority: 3 },
@@ -133,9 +133,29 @@ export function renderResultsTable(results) {
         case 'decode_tok_s':
         case 'prefill_tok_s':
         case 'cpu_baseline_decode_tok_s':
-        case 'cpu_baseline_prefill_tok_s':
-          html += `<span class="mono">${formatTokS(r[col.key])}</span>`;
+        case 'cpu_baseline_prefill_tok_s': {
+          // llama-bench style "avg \u00b1 stddev" with the pp{N} / tg{N} test
+          // label as a tooltip when the new schema is present. Older records
+          // without stddev fall back to the bare avg from formatTokS.
+          const isDecode = col.key === 'decode_tok_s';
+          const isPrefill = col.key === 'prefill_tok_s';
+          const stddev = isDecode ? r.decode_stddev_ts
+            : isPrefill ? r.prefill_stddev_ts
+            : null;
+          const testName = isDecode ? r.tg_test_name
+            : isPrefill ? r.pp_test_name
+            : null;
+          const avg = r[col.key];
+          let cell;
+          if (avg != null && stddev != null) {
+            cell = `${formatTokS(avg)} \u00b1 ${formatTokS(stddev)}`;
+          } else {
+            cell = formatTokS(avg);
+          }
+          const titleAttr = testName ? ` title="${escapeHtml(testName)}"` : '';
+          html += `<span class="mono"${titleAttr}>${cell}</span>`;
           break;
+        }
         case 't_eval_ms':
         case 't_p_eval_ms':
           html += `<span class="mono">${formatMs(r[col.key])}</span>`;
