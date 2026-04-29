@@ -186,6 +186,12 @@ function synthesizeCpuRowsFromBaseline(results) {
       ...r,
       decode_tok_s: r.cpu_baseline_decode_tok_s,
       prefill_tok_s: r.cpu_baseline_prefill_tok_s,
+      // The CPU baseline is a single-rep measurement (warmup + 1 timed),
+      // so it has no stddev. Null out the stddev fields the spread above
+      // inherited from the GPU row — otherwise the table renders the
+      // CPU avg with the GPU's stddev attached, which is nonsensical.
+      decode_stddev_ts: null,
+      prefill_stddev_ts: null,
       // CPU baseline runs have no t_eval / n_eval breakdowns — null those
       // out so the table doesn't show stale GPU numbers in CPU rows.
       n_eval: null,
