@@ -8,8 +8,14 @@ on:
       - 'harness.html'
       - 'harness.js'
       - 'models.json'
-      - 'build/jspi/**'
-      - 'build/asyncify/**'
+      # WASM-source changes — when any of these touch, CI rebuilds bench.{js,wasm}
+      # and ships the fresh binary alongside the dashboard. (Old paths
+      # 'build/jspi/**' / 'build/asyncify/**' were dead since build/ is
+      # gitignored — replaced with the actual sources.)
+      - 'bench.cpp'
+      - 'CMakeLists.txt'
+      - 'build.sh'
+      - 'llama.cpp'
       - 'spaces/**'
       - '.github/workflows/sync-to-hf-space.yml'
   workflow_dispatch:
@@ -35,6 +41,8 @@ jobs:
       - uses: actions/checkout@v4
         if: env.SKIP != '1'
         with:
+          # llama.cpp lives as a submodule and is required to build the WASM.
+          submodules: recursive
           lfs: true
 
       - uses: actions/setup-node@v4
@@ -42,17 +50,86 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
+      - name: Install Node dependencies
         if: env.SKIP != '1'
         run: npm ci || npm install
 
+      # ──────────────── WASM build (cached) ────────────────
+      # bench.{js,wasm} are deterministic w.r.t. their inputs, so we hash the
+      # inputs and let actions/cache memoize the build. Cache hit → restore
+      # bin/ directly. Cache miss → install Emscripten (also cached on a more
+      # stable key) and rebuild both jspi + asyncify variants via build.sh.
+      - name: Compute WASM cache key
+        if: env.SKIP != '1'
+        id: wasm-key
+        run: |
+          # Submodule pointer = exact llama.cpp commit being built against.
+          SUBMODULE_SHA=$(git submodule status llama.cpp 2>/dev/null | awk '{print $1}' | tr -d '+-' || echo none)
+          # Input file content hash captures bench.cpp, CMake flags, build script.
+          INPUTS_SHA=$(cat bench.cpp CMakeLists.txt build.sh | sha256sum | cut -d' ' -f1)
+          KEY="wasm-v1-${INPUTS_SHA}-${SUBMODULE_SHA}"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+          echo "Cache key: $KEY"
+
+      - name: Restore WASM build artifacts from cache
+        if: env.SKIP != '1'
+        id: wasm-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/jspi/bin
+            build/asyncify/bin
+          key: ${{ steps.wasm-key.outputs.key }}
+
+      # Emscripten + emdawnwebgpu installation is the slow part of a cold
+      # build (several minutes). Cache it on a stable key so even WASM cache
+      # misses don't pay the toolchain-install cost more than once per runner
+      # generation.
+      - name: Restore Emscripten SDK + emdawnwebgpu
+        if: env.SKIP != '1' && steps.wasm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          # build.sh installs emsdk one level up from the repo root and
+          # downloads emdawnwebgpu into build/emdawnwebgpu_pkg.
+          path: |
+            ../emsdk
+            build/emdawnwebgpu_pkg
+          key: emsdk-${{ runner.os }}-v1
+          restore-keys: |
+            emsdk-${{ runner.os }}-
+
+      - name: Install build prerequisites
+        if: env.SKIP != '1' && steps.wasm-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake unzip curl
+
+      - name: Build WASM (jspi + asyncify)
+        if: env.SKIP != '1' && steps.wasm-cache.outputs.cache-hit != 'true'
+        run: bash build.sh
+
+      - name: Verify WASM artifacts
+        if: env.SKIP != '1'
+        run: |
+          for v in jspi asyncify; do
+            for f in bench.js bench.wasm; do
+              if [ ! -f "build/$v/bin/$f" ]; then
+                echo "::error::Missing build/$v/bin/$f — WASM build did not produce expected output"
+                exit 1
+              fi
+            done
+          done
+          echo "WASM artifacts present:"
+          ls -lh build/jspi/bin/bench.js build/jspi/bin/bench.wasm build/asyncify/bin/bench.js build/asyncify/bin/bench.wasm
+
+      # ──────────────── Stage + push ────────────────
       - name: Mirror models.json into site/
         if: env.SKIP != '1'
         run: |
-          # The dashboard now reads benchmark records live from the HF
-          # dataset (no static combined.json baseline), so the only repo→
-          # site copy we still need is models.json — used by the run page
-          # to enumerate quants/variants.
+          # The dashboard reads benchmark records live from the HF dataset
+          # (no static combined.json baseline), so the only repo→site copy we
+          # still need is models.json — used by the run page to enumerate
+          # quants/variants.
           cp models.json site/models.json
 
       - name: Stage deploy assets
@@ -66,22 +143,15 @@ jobs:
           # Space README (with hf_oauth + app_file frontmatter) overrides any
           # README that might have been copied from site/.
           cp spaces/README.md _deploy/README.md
-          # WASM artifacts are gitignored. If a prior local build committed
-          # them as bin/bench.{js,wasm}, sync them; otherwise the Space keeps
-          # the WASM from the last manual `hf upload` push unchanged.
-          if [ -f build/jspi/bin/bench.js ] && [ -f build/asyncify/bin/bench.js ]; then
-            mkdir -p _deploy/build/jspi _deploy/build/asyncify
-            cp build/jspi/bin/bench.js build/jspi/bin/bench.wasm _deploy/build/jspi/
-            cp build/asyncify/bin/bench.js build/asyncify/bin/bench.wasm _deploy/build/asyncify/
-            # build-info.json is emitted by build.sh next to the wasm; copy
-            # alongside so the browser can stamp llama.cpp commit/describe
-            # onto each record. Optional — older WASM dirs may not have it.
-            [ -f build/jspi/bin/build-info.json ] && cp build/jspi/bin/build-info.json _deploy/build/jspi/ || true
-            [ -f build/asyncify/bin/build-info.json ] && cp build/asyncify/bin/build-info.json _deploy/build/asyncify/ || true
-            echo "Included WASM artifacts in bundle."
-          else
-            echo "No build/ artifacts found; leaving Space WASM untouched."
-          fi
+          # WASM is always built/restored above — no fallback path needed.
+          mkdir -p _deploy/build/jspi _deploy/build/asyncify
+          cp build/jspi/bin/bench.js build/jspi/bin/bench.wasm _deploy/build/jspi/
+          cp build/asyncify/bin/bench.js build/asyncify/bin/bench.wasm _deploy/build/asyncify/
+          # build-info.json is emitted by build.sh next to the wasm; copy
+          # alongside so the browser can stamp llama.cpp commit/describe
+          # onto each record.
+          [ -f build/jspi/bin/build-info.json ] && cp build/jspi/bin/build-info.json _deploy/build/jspi/ || true
+          [ -f build/asyncify/bin/build-info.json ] && cp build/asyncify/bin/build-info.json _deploy/build/asyncify/ || true
           # .nojekyll so GH-style rules don't mangle underscored dirs if any.
           touch _deploy/.nojekyll
           du -sh _deploy | awk '{print "Deploy bundle: "$1}'
@@ -100,18 +170,14 @@ jobs:
           git clone "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE_REPO}" _space
           cd _space
 
-          # If the staging bundle included build/*/bench.{js,wasm}, sync
-          # those too; otherwise exclude build/** so the Space's manually-
-          # uploaded WASM is preserved across CI runs.
-          # --exclude='.git' preserves git internals; --exclude='.gitattributes'
-          # preserves HF's LFS/Xet tracking rules for .wasm; --exclude='build/**'
-          # preserves any manually-uploaded WASM when CI doesn't have a local build.
-          if [ -d ../_deploy/build ]; then
-            RSYNC_EXCLUDES=(--exclude='.git' --exclude='.gitattributes')
-          else
-            RSYNC_EXCLUDES=(--exclude='.git' --exclude='.gitattributes' --exclude='build/**')
-          fi
-          rsync -a --delete "${RSYNC_EXCLUDES[@]}" ../_deploy/ ./
+          # CI now builds WASM as part of the workflow, so the deploy bundle
+          # is always authoritative. Preserve .git and .gitattributes (HF's
+          # LFS/Xet tracking rules for .wasm); --delete prunes files removed
+          # from the source.
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='.gitattributes' \
+            ../_deploy/ ./
           git add -A
 
           if git diff --cached --quiet; then
