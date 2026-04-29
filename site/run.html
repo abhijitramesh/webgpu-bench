@@ -136,6 +136,13 @@
               <label class="filter-label" for="iterations-input">Reps (-r)</label>
               <input type="number" id="iterations-input" class="filter-select run-iter-input" value="5" min="1" max="50" step="1">
             </div>
+            <div class="filter-group">
+              <span class="filter-label">Skip</span>
+              <div class="run-filters-checks">
+                <label class="run-hide-label" title="Skip the consistency check (CPU baseline + GPU forced-decode agreement). Useful when consistency is failing on a device or you only care about perf."><input type="checkbox" id="skip-consistency"> Consistency</label>
+                <label class="run-hide-label" title="Skip the single-rep CPU perf baseline. Useful when CPU runs are too slow or unstable on a device."><input type="checkbox" id="skip-cpu-perf"> CPU perf</label>
+              </div>
+            </div>
           </div>
         </div>
 

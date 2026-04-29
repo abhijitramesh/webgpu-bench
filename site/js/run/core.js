@@ -92,92 +92,109 @@ async function runBenchActions(Module, {
   // Two sub-modes: (a) CPU baseline — generates token_ids via bench_run for a
   // future GPU verification pass; (b) GPU verification — runs bench_run then
   // bench_eval_tokens to compute the agreement rate against refTokenIds.
+  // Soft-fail: a failure here falls through to the perf phase rather than
+  // aborting the whole run.
   if (consistencyPrompt) {
-    onStatus?.('consistency', 'Running consistency check...');
-    onLog?.(`bench_run("...", ${consistencyNPredict}) — consistency phase`);
-    const raw = await Module.ccall(
-      'bench_run', 'string',
-      ['string', 'number'],
-      [consistencyPrompt, consistencyNPredict],
-      { async: true },
-    );
-    const r = parseBenchResult('bench_run', raw);
-    out.output = r.output || '';
-    out.consistency = { token_ids: r.token_ids || [] };
-
-    if (refTokenIds) {
-      onLog?.('bench_eval_tokens — forced-decode vs CPU baseline');
-      const evalRaw = await Module.ccall(
-        'bench_eval_tokens', 'string',
-        ['string', 'string'],
-        [consistencyPrompt, refTokenIds],
+    try {
+      onStatus?.('consistency', 'Running consistency check...');
+      onLog?.(`bench_run("...", ${consistencyNPredict}) — consistency phase`);
+      const raw = await Module.ccall(
+        'bench_run', 'string',
+        ['string', 'number'],
+        [consistencyPrompt, consistencyNPredict],
         { async: true },
       );
-      const ev = parseBenchResult('bench_eval_tokens', evalRaw);
-      out.consistency = { ...out.consistency, ...ev };
-      onLog?.(
-        `Consistency: ${(ev.agreement_rate * 100).toFixed(1)}% top-1 agreement (` +
-        `${ev.n_agree}/${ev.n_tokens})` +
-        (ev.first_disagreement >= 0 ? ` — first diverge @ ${ev.first_disagreement}` : '')
-      );
+      const r = parseBenchResult('bench_run', raw);
+      out.output = r.output || '';
+      out.consistency = { token_ids: r.token_ids || [] };
+
+      if (refTokenIds) {
+        onLog?.('bench_eval_tokens — forced-decode vs CPU baseline');
+        const evalRaw = await Module.ccall(
+          'bench_eval_tokens', 'string',
+          ['string', 'string'],
+          [consistencyPrompt, refTokenIds],
+          { async: true },
+        );
+        const ev = parseBenchResult('bench_eval_tokens', evalRaw);
+        out.consistency = { ...out.consistency, ...ev };
+        onLog?.(
+          `Consistency: ${(ev.agreement_rate * 100).toFixed(1)}% top-1 agreement (` +
+          `${ev.n_agree}/${ev.n_tokens})` +
+          (ev.first_disagreement >= 0 ? ` — first diverge @ ${ev.first_disagreement}` : '')
+        );
+      }
+    } catch (err) {
+      onLog?.(`Consistency phase failed: ${err.message} — continuing to perf phase`);
     }
   }
 
   // ─── Perf phase (llama-bench style) ───
   // Synthetic random tokens; KV cleared per call inside bench_pp/bench_tg.
   // Warmup is one full pp + one tg(1) call before the timed reps, matching
-  // tools/llama-bench/llama-bench.cpp.
+  // tools/llama-bench/llama-bench.cpp. pp and tg are wrapped independently
+  // so failure in one doesn't skip the other.
   const wantPp = nPrompt > 0;
   const wantTg = nGen > 0;
   if (wantPp || wantTg) {
     const tests = [];
 
     if (wantPp) {
-      if (!noWarmup) {
-        onStatus?.('perf', `warmup pp${nPrompt}`);
-        onLog?.(`bench_pp(${nPrompt}) — warmup`);
-        const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
-        parseBenchResult('bench_pp warmup', raw);
+      try {
+        if (!noWarmup) {
+          onStatus?.('perf', `warmup pp${nPrompt}`);
+          onLog?.(`bench_pp(${nPrompt}) — warmup`);
+          const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
+          parseBenchResult('bench_pp warmup', raw);
+        }
+        const samples_ns = [];
+        for (let i = 0; i < nReps; i++) {
+          onStatus?.('perf', `pp${nPrompt} ${i + 1}/${nReps}`);
+          const t0 = performance.now();
+          const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
+          const t_ns = (performance.now() - t0) * 1e6;
+          parseBenchResult('bench_pp', raw);
+          samples_ns.push(t_ns);
+          onLog?.(`pp${nPrompt} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nPrompt / t_ns).toFixed(1)} t/s)`);
+        }
+        tests.push(buildTest(`pp${nPrompt}`, nPrompt, 0, samples_ns));
+      } catch (err) {
+        onLog?.(`pp test failed: ${err.message}`);
       }
-      const samples_ns = [];
-      for (let i = 0; i < nReps; i++) {
-        onStatus?.('perf', `pp${nPrompt} ${i + 1}/${nReps}`);
-        const t0 = performance.now();
-        const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
-        const t_ns = (performance.now() - t0) * 1e6;
-        parseBenchResult('bench_pp', raw);
-        samples_ns.push(t_ns);
-        onLog?.(`pp${nPrompt} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nPrompt / t_ns).toFixed(1)} t/s)`);
-      }
-      tests.push(buildTest(`pp${nPrompt}`, nPrompt, 0, samples_ns));
     }
 
     if (wantTg) {
-      if (!noWarmup) {
-        onStatus?.('perf', `warmup tg`);
-        onLog?.('bench_tg(1) — warmup');
-        const raw = await Module.ccall('bench_tg', 'string', ['number'], [1], { async: true });
-        parseBenchResult('bench_tg warmup', raw);
+      try {
+        if (!noWarmup) {
+          onStatus?.('perf', `warmup tg`);
+          onLog?.('bench_tg(1) — warmup');
+          const raw = await Module.ccall('bench_tg', 'string', ['number'], [1], { async: true });
+          parseBenchResult('bench_tg warmup', raw);
+        }
+        const samples_ns = [];
+        for (let i = 0; i < nReps; i++) {
+          onStatus?.('perf', `tg${nGen} ${i + 1}/${nReps}`);
+          const t0 = performance.now();
+          const raw = await Module.ccall('bench_tg', 'string', ['number'], [nGen], { async: true });
+          const t_ns = (performance.now() - t0) * 1e6;
+          parseBenchResult('bench_tg', raw);
+          samples_ns.push(t_ns);
+          onLog?.(`tg${nGen} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nGen / t_ns).toFixed(1)} t/s)`);
+        }
+        tests.push(buildTest(`tg${nGen}`, 0, nGen, samples_ns));
+      } catch (err) {
+        onLog?.(`tg test failed: ${err.message}`);
       }
-      const samples_ns = [];
-      for (let i = 0; i < nReps; i++) {
-        onStatus?.('perf', `tg${nGen} ${i + 1}/${nReps}`);
-        const t0 = performance.now();
-        const raw = await Module.ccall('bench_tg', 'string', ['number'], [nGen], { async: true });
-        const t_ns = (performance.now() - t0) * 1e6;
-        parseBenchResult('bench_tg', raw);
-        samples_ns.push(t_ns);
-        onLog?.(`tg${nGen} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nGen / t_ns).toFixed(1)} t/s)`);
-      }
-      tests.push(buildTest(`tg${nGen}`, 0, nGen, samples_ns));
     }
 
-    out.metrics = {
-      tests,
-      n_prompt: wantPp ? nPrompt : 0,
-      n_gen: wantTg ? nGen : 0,
-      n_reps: nReps,
-    };
+    if (tests.length > 0) {
+      out.metrics = {
+        tests,
+        n_prompt: wantPp ? nPrompt : 0,
+        n_gen: wantTg ? nGen : 0,
+        n_reps: nReps,
+      };
+    }
   }
 
   return out;

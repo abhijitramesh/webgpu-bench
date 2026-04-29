@@ -43,6 +43,12 @@ const state = {
   iterations: DEFAULT_ITERATIONS,
   nPrompt: DEFAULT_N_PROMPT,
   nGen: DEFAULT_N_GEN,
+  // User-controlled phase toggles. Defaults match the previous behaviour:
+  // run consistency (CPU baseline + GPU forced-decode) AND run CPU perf
+  // baseline. Both checkable to skip — useful on devices where CPU is too
+  // slow / unreliable to be worth waiting for.
+  skipConsistency: false,
+  skipCpuPerf: false,
   mounted: false,
   // Tracks variants the Run pipeline downloaded this session (as opposed to
   // the standalone Download button or pre-existing cache). Only these are
@@ -660,6 +666,20 @@ function wirePerfInputs() {
       ng.value = String(state.nGen);
     });
   }
+  const skipCons = $('skip-consistency');
+  if (skipCons) {
+    skipCons.checked = state.skipConsistency;
+    skipCons.addEventListener('change', () => {
+      state.skipConsistency = skipCons.checked;
+    });
+  }
+  const skipCpu = $('skip-cpu-perf');
+  if (skipCpu) {
+    skipCpu.checked = state.skipCpuPerf;
+    skipCpu.addEventListener('change', () => {
+      state.skipCpuPerf = skipCpu.checked;
+    });
+  }
 }
 
 function submittableResults() {
@@ -1274,55 +1294,74 @@ async function runVariantWithIterations(v, row) {
   const nReps = Math.max(1, state.iterations || DEFAULT_ITERATIONS);
   const nPrompt = Math.max(0, state.nPrompt ?? DEFAULT_N_PROMPT);
   const nGen = Math.max(0, state.nGen ?? DEFAULT_N_GEN);
+  // Phase toggles from the run page. Combined effect:
+  //   skip both          → only GPU perf, no CPU pass at all
+  //   skip consistency   → CPU perf baseline + GPU perf, no token-id check
+  //   skip CPU perf      → CPU consistency tokens + GPU consistency + GPU perf
+  //   skip neither       → full default flow
+  const runConsistency = !state.skipConsistency;
+  const runCpuPerf = !state.skipCpuPerf;
+  const needCpuPass = runConsistency || runCpuPerf;
 
   // ─── CPU baseline ───
-  // Consistency (token_ids) + a single warmup-then-1-rep perf measurement.
-  // The single rep gives us a CPU-vs-GPU speedup signal in the dashboard
-  // without paying for a full nReps sweep on CPU.
-  row.setStatus('cpu-baseline', 'reference tokens + 1-rep perf');
+  // Skipped entirely if both toggles disable it. Otherwise the pass mixes
+  // and matches: consistency_run captures token_ids; perf phase runs at
+  // nReps=1 (single warmup+timed rep — enough to populate the dashboard's
+  // CPU/GPU comparison without doubling CPU runtime).
   let cpuResult;
-  try {
-    cpuResult = await runBenchmarkInWorker(v, {
-      consistencyPrompt: DEFAULT_PROMPT,
-      consistencyNPredict: DEFAULT_N_PREDICT,
-      refTokenIds: null,
-      nPrompt,
-      nGen,
-      nReps: 1,
-      nCtx: DEFAULT_N_CTX,
-      nGpuLayers: 0,
-    }, {
-      onStatus: (status, msg) => row.setStatus(`cpu/${status}`, msg),
-      onProgress: (fr, downloaded, total) => row.setProgress(fr, downloaded, total),
-      onLog: logLine,
-    });
-  } catch (err) {
-    cpuResult = { status: 'error', error: err.message || String(err) };
+  if (needCpuPass) {
+    const phaseLabel = runConsistency && runCpuPerf ? 'reference tokens + 1-rep perf'
+      : runConsistency ? 'reference tokens'
+      : '1-rep perf';
+    row.setStatus('cpu-baseline', phaseLabel);
+    try {
+      cpuResult = await runBenchmarkInWorker(v, {
+        consistencyPrompt: runConsistency ? DEFAULT_PROMPT : '',
+        consistencyNPredict: DEFAULT_N_PREDICT,
+        refTokenIds: null,
+        nPrompt: runCpuPerf ? nPrompt : 0,
+        nGen:    runCpuPerf ? nGen    : 0,
+        nReps: 1,
+        nCtx: DEFAULT_N_CTX,
+        nGpuLayers: 0,
+      }, {
+        onStatus: (status, msg) => row.setStatus(`cpu/${status}`, msg),
+        onProgress: (fr, downloaded, total) => row.setProgress(fr, downloaded, total),
+        onLog: logLine,
+      });
+    } catch (err) {
+      cpuResult = { status: 'error', error: err.message || String(err) };
+    }
+  } else {
+    cpuResult = { status: 'skipped' };
   }
 
-  // CPU baseline is "best effort": if it fails (typically OOM on a tight
-  // tab), keep going with the GPU pass but skip consistency. Perf metrics
-  // are independent of consistency so they're still reported.
+  // CPU pass is best-effort. Failures (OOM, slow device, missing op) don't
+  // block the GPU run — the user opted into resilience implicitly by the
+  // phase being best-effort, and explicitly via the skip checkboxes.
   const cpuOk = cpuResult.status === 'done';
-  if (!cpuOk) {
-    logLine(
-      `CPU baseline failed (${cpuResult.error || 'unknown'}) — proceeding with GPU run, skipping consistency check.`
-    );
+  if (cpuResult.status === 'error') {
+    logLine(`CPU baseline failed (${cpuResult.error || 'unknown'}) — proceeding with GPU run.`);
     row.setStatus('cpu-skipped', 'continuing with GPU only');
   }
 
-  const refTokenIds = cpuOk ? (cpuResult.consistency?.token_ids || []).join(',') : '';
+  // refTokenIds is the GPU pass's input for forced-decode consistency. Only
+  // pass when we actually have tokens (consistency was requested AND CPU
+  // produced tokens).
+  const refTokenIds = (cpuOk && runConsistency && cpuResult.consistency?.token_ids?.length)
+    ? cpuResult.consistency.token_ids.join(',')
+    : '';
 
   if (state.aborted) {
     return { status: 'error', error: 'aborted', cpu: cpuResult, gpu: null };
   }
 
-  // ─── GPU pass: consistency + perf in one model load ───
+  // ─── GPU pass: consistency (when not skipped) + perf in one model load ───
   row.setStatus('gpu-run', 'loading model');
   let gpuResult;
   try {
     gpuResult = await runBenchmarkInWorker(v, {
-      consistencyPrompt: DEFAULT_PROMPT,
+      consistencyPrompt: runConsistency ? DEFAULT_PROMPT : '',
       consistencyNPredict: DEFAULT_N_PREDICT,
       refTokenIds: refTokenIds || null,
       nPrompt,
