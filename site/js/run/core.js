@@ -329,12 +329,17 @@ export async function runBenchmarkCore({
     if (initResult !== 0) throw new Error(`bench_init failed: ${initResult}`);
     onLog('Backends initialized');
 
-    onStatus('loading_model', `Loading model (ctx=${nCtx}, gpu_layers=${nGpuLayers})...`);
+    // core.js is the main-thread/heap-stream path (used by harness.js +
+    // runner.js Playwright harness). Sync access handles aren't available
+    // on the main thread, so we always pass use_mmap=1 here — llama.cpp
+    // mmap's the HEAPU8-backed MEMFS file zero-copy. Capped at ~2GB.
+    // For >2GB models, run via the dashboard Run page (worker path).
+    onStatus('loading_model', `Loading model (ctx=${nCtx}, gpu_layers=${nGpuLayers}, mmap=1)...`);
     const loadResult = await Module.ccall(
       'bench_load',
       'number',
-      ['string', 'number', 'number'],
-      ['/model.gguf', nCtx, nGpuLayers],
+      ['string', 'number', 'number', 'number'],
+      ['/model.gguf', nCtx, nGpuLayers, 1],
       { async: true },
     );
     if (loadResult !== 0) throw new Error(`bench_load failed: ${loadResult}`);

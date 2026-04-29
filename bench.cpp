@@ -48,7 +48,7 @@ int bench_init() {
     return 0;
 }
 
-int bench_load(const char * model_path, int n_ctx, int n_gpu_layers) {
+int bench_load(const char * model_path, int n_ctx, int n_gpu_layers, int use_mmap) {
     // Clean up previous state if any
     if (g_sampler) { llama_sampler_free(g_sampler); g_sampler = nullptr; }
     if (g_ctx)     { llama_free(g_ctx);             g_ctx = nullptr; }
@@ -56,9 +56,12 @@ int bench_load(const char * model_path, int n_ctx, int n_gpu_layers) {
 
     g_n_ctx = n_ctx;
 
-    // Load model
+    // Load model. use_mmap=0 forces fread-based loading via the C library —
+    // required for OPFS-backed models, where the file is exposed via
+    // patched MEMFS stream_ops that route reads to a FileSystemSyncAccessHandle.
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = n_gpu_layers;
+    model_params.use_mmap = use_mmap != 0;
 
     g_model = llama_model_load_from_file(model_path, model_params);
     if (!g_model) {

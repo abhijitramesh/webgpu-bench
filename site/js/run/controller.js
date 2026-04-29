@@ -1126,6 +1126,7 @@ async function onRunClick() {
 function runInWorker({
   params,
   stream,
+  fileHandle,
   onStatus,
   onProgress,
   onLog,
@@ -1165,6 +1166,19 @@ function runInWorker({
     worker.onmessageerror = () => {
       finish({ status: 'error', error: 'worker message deserialization failed' });
     };
+
+    // Three transport modes — see bench-worker.js runOne() for matching shape.
+    if (fileHandle) {
+      // OPFS path: FileSystemFileHandle is structured-cloneable, not
+      // transferable. The worker creates its own sync access handle on the
+      // cloned reference (still bound to the same underlying OPFS file).
+      try {
+        worker.postMessage({ type: 'run', params, fileHandle });
+      } catch (err) {
+        finish({ status: 'error', error: `postMessage(fileHandle) failed: ${err.message}` });
+      }
+      return;
+    }
 
     // Mobile browsers (esp. iOS Safari) advertise transferable streams but
     // can't actually transfer ReadableStreams across postMessage — the call
@@ -1249,9 +1263,59 @@ async function readStreamToBuffer(stream, contentLength, onProgress) {
   return out.buffer;
 }
 
-// Fetch the model through the source adapter and hand the stream to a
-// freshly-spawned worker. Returns a record shaped like runBenchmarkCore().
+// Fetch the model and hand it to a freshly-spawned worker. Returns a record
+// shaped like runBenchmarkCore(). Two paths:
+//
+//   wllama-style OPFS streaming (preferred): if the source provides
+//   opfsHandleForModel (currently hostedSource), download to OPFS on the
+//   main thread, then transfer the FileSystemFileHandle to the worker.
+//   The worker opens a sync access handle and routes MEMFS reads through
+//   it, never copying the model into the WASM heap. Supports >2GB.
+//
+//   Heap-stream (fallback for localSource): keep the prior behavior —
+//   stream the GGUF into a single _malloc'd buffer in the WASM heap.
+//   Faster for small models (zero-copy mmap on load), capped at ~2GB.
 async function runBenchmarkInWorker(v, params, callbacks) {
+  const useOpfs = typeof state.source.opfsHandleForModel === 'function';
+
+  const baseParams = {
+    buildType: 'Suspending' in WebAssembly ? 'jspi' : 'asyncify',
+    // Model load
+    nCtx: params.nCtx,
+    nGpuLayers: params.nGpuLayers,
+    // Consistency phase — empty consistencyPrompt skips it
+    consistencyPrompt: params.consistencyPrompt || '',
+    consistencyNPredict: params.consistencyNPredict || DEFAULT_N_PREDICT,
+    refTokenIds: params.refTokenIds || null,
+    // Perf phase — set both to 0 to skip
+    nPrompt: params.nPrompt ?? 0,
+    nGen:    params.nGen    ?? 0,
+    nReps:   params.nReps   ?? DEFAULT_ITERATIONS,
+    noWarmup: !!params.noWarmup,
+  };
+
+  if (useOpfs) {
+    let fileHandle, contentLength;
+    try {
+      callbacks.onStatus?.('downloading', 'Downloading model to OPFS...');
+      const r = await state.source.opfsHandleForModel(
+        v.repo, v.filename,
+        callbacks.onProgress,
+      );
+      fileHandle = r.handle;
+      contentLength = r.size;
+    } catch (err) {
+      return { status: 'error', error: `opfsHandleForModel failed: ${err.message}` };
+    }
+    return runInWorker({
+      params: { ...baseParams, contentLength },
+      fileHandle,
+      onStatus: callbacks.onStatus,
+      onProgress: callbacks.onProgress,
+      onLog: callbacks.onLog,
+    });
+  }
+
   let fetched;
   try {
     fetched = await state.source.fetchModel(v.repo, v.filename);
@@ -1259,30 +1323,13 @@ async function runBenchmarkInWorker(v, params, callbacks) {
     return { status: 'error', error: `fetchModel failed: ${err.message}` };
   }
 
-  const record = await runInWorker({
-    params: {
-      buildType: 'Suspending' in WebAssembly ? 'jspi' : 'asyncify',
-      contentLength: fetched.contentLength,
-      // Model load
-      nCtx: params.nCtx,
-      nGpuLayers: params.nGpuLayers,
-      // Consistency phase — empty consistencyPrompt skips it
-      consistencyPrompt: params.consistencyPrompt || '',
-      consistencyNPredict: params.consistencyNPredict || DEFAULT_N_PREDICT,
-      refTokenIds: params.refTokenIds || null,
-      // Perf phase — set both to 0 to skip
-      nPrompt: params.nPrompt ?? 0,
-      nGen:    params.nGen    ?? 0,
-      nReps:   params.nReps   ?? DEFAULT_ITERATIONS,
-      noWarmup: !!params.noWarmup,
-    },
+  return runInWorker({
+    params: { ...baseParams, contentLength: fetched.contentLength },
     stream: fetched.stream,
     onStatus: callbacks.onStatus,
     onProgress: callbacks.onProgress,
     onLog: callbacks.onLog,
   });
-
-  return record;
 }
 
 // Runs one variant: CPU consistency baseline (one model load, generates

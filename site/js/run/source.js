@@ -95,6 +95,54 @@ export function hostedSource() {
       }
     },
 
+    // Ensure the model is fully downloaded to OPFS, then return its
+    // FileSystemFileHandle. Used by the wllama-style OPFS-streaming load
+    // path: the worker opens a sync access handle on this FileHandle and
+    // routes MEMFS reads through it, never copying the model into the
+    // WASM heap. onProgress is called during the download leg with
+    // (fraction, downloaded, total).
+    async opfsHandleForModel(repo, file, onProgress) {
+      const cached = await getOpfsFileHandle(repo, file, { create: false }).catch(() => null);
+      if (cached) {
+        const f = await cached.getFile();
+        if (f.size > 0) {
+          onProgress?.(1, f.size, f.size);
+          return { handle: cached, size: f.size };
+        }
+      }
+
+      // Cache miss — download from HF straight into a writable OPFS stream.
+      const url = `https://huggingface.co/${repo}/resolve/main/${file}`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
+      }
+      const contentLength = parseInt(resp.headers.get('content-length') || '0', 10);
+
+      const handle = await getOpfsFileHandle(repo, file, { create: true });
+      const writable = await handle.createWritable({ keepExistingData: false });
+
+      // Same persistent-storage hint as fetchModel — best-effort.
+      navigator.storage?.persist?.().catch(() => {});
+
+      try {
+        const reader = resp.body.getReader();
+        let downloaded = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writable.write(value);
+          downloaded += value.byteLength;
+          if (contentLength > 0) onProgress?.(downloaded / contentLength, downloaded, contentLength);
+        }
+        await writable.close();
+        return { handle, size: downloaded };
+      } catch (err) {
+        try { await writable.abort(err); } catch { /* ignore */ }
+        throw err;
+      }
+    },
+
     async fetchModel(repo, file) {
       // Cache hit → stream the OPFS file straight out.
       try {
