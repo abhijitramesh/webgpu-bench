@@ -75,10 +75,13 @@ async function getGpuInfo(page) {
 
 // Build the URL the headless browser navigates to. `mode` selects which
 // phases to run inside one model load:
-//   'consistency' — only bench_run + bench_eval_tokens (used for CPU baseline)
+//   'consistency' — only bench_run + bench_eval_tokens
 //   'perf'        — only bench_pp + bench_tg
 //   'both'        — both, in one model load (default for the GPU pass)
-function buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds = null, mode = 'both') {
+// `nRepsOverride` lets the caller pin a non-default rep count for this URL
+// (used for the CPU baseline, which runs a single warmup+timed rep — enough
+// for a sanity-check CPU/GPU comparison without a full sweep on CPU).
+function buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds = null, mode = 'both', nRepsOverride = null) {
   const harnessUrl = new URL('/harness.html', serverUrl);
   harnessUrl.searchParams.set('model', variant.filename);
   harnessUrl.searchParams.set('hfRepo', variant.repo);
@@ -86,7 +89,7 @@ function buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds = null, mod
   harnessUrl.searchParams.set('nPredict', String(config.N_PREDICT));
   harnessUrl.searchParams.set('nPrompt', String(config.N_PROMPT));
   harnessUrl.searchParams.set('nGen',    String(config.N_GEN));
-  harnessUrl.searchParams.set('nReps',   String(config.N_REPS));
+  harnessUrl.searchParams.set('nReps',   String(nRepsOverride ?? config.N_REPS));
   harnessUrl.searchParams.set('nCtx', String(config.N_CTX));
   harnessUrl.searchParams.set('nGpuLayers', String(nGpuLayers));
   harnessUrl.searchParams.set('mode', mode);
@@ -120,7 +123,7 @@ function getBaselineTokenIds(baselines, browserName, filename) {
 }
 
 // Run a single benchmark via Playwright (chromium)
-async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null, mode = 'both') {
+async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null, mode = 'both', nRepsOverride = null) {
   const context = await browser.newContext();
   const page = await context.newPage();
 
@@ -130,7 +133,7 @@ async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_G
     consoleLogs.push(`[${msg.type()}] ${msg.text()}`);
   });
 
-  const harnessUrl = buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds, mode);
+  const harnessUrl = buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds, mode, nRepsOverride);
 
   try {
     await page.goto(harnessUrl, { timeout: 30_000 });
@@ -167,8 +170,8 @@ async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_G
 }
 
 // Run a single benchmark in a WebDriverIO Safari session
-async function runBenchmarkSafari(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null, mode = 'both') {
-  const harnessUrl = buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds, mode);
+async function runBenchmarkSafari(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null, mode = 'both', nRepsOverride = null) {
+  const harnessUrl = buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds, mode, nRepsOverride);
 
   try {
     await browser.url(harnessUrl);
@@ -330,7 +333,7 @@ function deleteModelCache(variant) {
 // Run a variant in a Playwright browser (chromium) with a hard-kill timeout.
 // Launches a fresh browser per variant to prevent WASM memory accumulation.
 // If the browser hangs past the soft timeout, SIGKILL ensures we don't wait forever.
-async function runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both') {
+async function runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both', nRepsOverride = null) {
   const browserType = getBrowserType(browserName);
   const launchOpts = getBrowserLaunchArgs(browserName);
 
@@ -357,7 +360,7 @@ async function runVariantPlaywright(browserName, variant, serverUrl, timestamp, 
   }, config.TIMEOUTS.total + 5000);
 
   try {
-    const { bench } = await runBenchmark(browser, variant, serverUrl, nGpuLayers, refTokenIds, mode);
+    const { bench } = await runBenchmark(browser, variant, serverUrl, nGpuLayers, refTokenIds, mode, nRepsOverride);
     clearTimeout(hardTimer);
     const wallTimeMs = Date.now() - startTime;
     return makeResult(timestamp, browserName, variant, bench, nGpuLayers, wallTimeMs);
@@ -382,7 +385,7 @@ async function runVariantPlaywright(browserName, variant, serverUrl, timestamp, 
 
 // Run a variant in Safari/WebKit with a hard-kill timeout.
 // Starts a fresh safaridriver + session per variant so one crash never cascade-fails.
-async function runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both') {
+async function runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both', nRepsOverride = null) {
   let driverProc;
   let session;
   try {
@@ -404,7 +407,7 @@ async function runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTo
   }, config.TIMEOUTS.total + 5000);
 
   try {
-    const { bench } = await runBenchmarkSafari(session, variant, serverUrl, nGpuLayers, refTokenIds, mode);
+    const { bench } = await runBenchmarkSafari(session, variant, serverUrl, nGpuLayers, refTokenIds, mode, nRepsOverride);
     clearTimeout(hardTimer);
     const wallTimeMs = Date.now() - startTime;
     return makeResult(timestamp, 'webkit', variant, bench, nGpuLayers, wallTimeMs);
@@ -424,11 +427,11 @@ async function runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTo
 }
 
 // Dispatch a variant run to the appropriate browser driver
-async function runVariantInBrowser(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both') {
+async function runVariantInBrowser(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both', nRepsOverride = null) {
   if (browserName === 'webkit') {
-    return runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode);
+    return runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode, nRepsOverride);
   }
-  return runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode);
+  return runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode, nRepsOverride);
 }
 
 // Main — variant-first loop: download model → CPU baseline → all browsers GPU → delete cache
@@ -493,16 +496,22 @@ async function main() {
         const blBrowser = activeBrowsers.find(b => b !== 'webkit') || activeBrowsers[0];
         process.stdout.write(`  cpu baseline (${blBrowser})... `);
 
-        // CPU pass is consistency-only — produces token_ids for the GPU
-        // forced-decode comparison. Perf phase is skipped (mode=consistency).
+        // CPU pass produces token_ids for the GPU forced-decode comparison
+        // AND a single-rep perf measurement (warmup + 1 timed) so the
+        // dashboard has a CPU baseline to compare GPU numbers against.
         const cpuResult = await runVariantInBrowser(
-          blBrowser, variant, serverUrl, timestamp, 0, null, 'consistency'
+          blBrowser, variant, serverUrl, timestamp, 0, null, 'both', /* nReps */ 1
         );
 
         const tokenIds = cpuResult.consistency?.token_ids;
         if (cpuResult.status === 'done' && tokenIds?.length > 0) {
           cpuBaselines[baselineKey][variant.filename] = tokenIds;
-          console.log(`OK | ${tokenIds.length} reference tokens | wall: ${(cpuResult.wallTimeMs / 1000).toFixed(1)}s`);
+          const tests = cpuResult.metrics?.tests;
+          const fmt = (prefix) => {
+            const t = tests?.find(x => x.name?.startsWith(prefix));
+            return t ? `${t.name}: ${t.avg_ts.toFixed(2)} t/s` : `${prefix}: \u2014`;
+          };
+          console.log(`OK | ${tokenIds.length} ref tokens | ${fmt('pp')} | ${fmt('tg')} | wall: ${(cpuResult.wallTimeMs / 1000).toFixed(1)}s`);
         } else {
           cpuBaselines[baselineKey][variant.filename] = null; // failed — don't retry
           console.log(`FAIL (${cpuResult.error || 'unknown'})`);

@@ -1276,16 +1276,19 @@ async function runVariantWithIterations(v, row) {
   const nGen = Math.max(0, state.nGen ?? DEFAULT_N_GEN);
 
   // ─── CPU baseline ───
-  // Pure consistency pass — capture token_ids; no perf metrics on CPU.
-  row.setStatus('cpu-baseline', 'generating reference tokens');
+  // Consistency (token_ids) + a single warmup-then-1-rep perf measurement.
+  // The single rep gives us a CPU-vs-GPU speedup signal in the dashboard
+  // without paying for a full nReps sweep on CPU.
+  row.setStatus('cpu-baseline', 'reference tokens + 1-rep perf');
   let cpuResult;
   try {
     cpuResult = await runBenchmarkInWorker(v, {
       consistencyPrompt: DEFAULT_PROMPT,
       consistencyNPredict: DEFAULT_N_PREDICT,
       refTokenIds: null,
-      nPrompt: 0,
-      nGen: 0,
+      nPrompt,
+      nGen,
+      nReps: 1,
       nCtx: DEFAULT_N_CTX,
       nGpuLayers: 0,
     }, {
@@ -1380,12 +1383,15 @@ function makeRecord(v, vr, machine, browser, wallTimeMs) {
     t_eval_ms:   tg ? round2(tg.avg_ns / 1e6) : 0,
   } : null;
 
-  const cpuBaseline = vr.cpu?.status === 'done' && vr.cpu.consistency?.token_ids?.length ? {
-    // CPU pass no longer measures perf — only token_ids for consistency.
-    // Keep the field present but null-valued so dashboards that look it up
-    // don't crash; downstream code can treat null as "not measured".
-    prefill_tok_s: null,
-    decode_tok_s: null,
+  // CPU baseline now runs a 1-rep perf sweep alongside the consistency
+  // pass, so we have CPU-vs-GPU numbers to compare on the dashboard.
+  // n=1 means no stddev, so the dashboard cell renders just the avg.
+  const cpuTests = vr.cpu?.metrics?.tests;
+  const cpuPp = cpuTests?.find(t => t.name?.startsWith('pp')) || null;
+  const cpuTg = cpuTests?.find(t => t.name?.startsWith('tg')) || null;
+  const cpuBaseline = vr.cpu?.status === 'done' ? {
+    prefill_tok_s: cpuPp ? round2(cpuPp.avg_ts) : null,
+    decode_tok_s:  cpuTg ? round2(cpuTg.avg_ts) : null,
   } : null;
 
   return {
