@@ -227,11 +227,20 @@ async function _computeBudget() {
 
   const isMobile = isMobileDevice();
 
-  // Run both probes in parallel.
-  const [heapProbe, gpuProbe] = await Promise.all([
-    probeHeapBudgetMB(),
-    probeGpuBudgetMB(),
-  ]);
+  // The heap probe is always safe — it runs inside a dedicated worker so
+  // a runaway grow() kills the worker, not the tab.
+  //
+  // The GPU probe is NOT safe on mobile. It allocates real WebGPU buffers
+  // in the GPU process, which is shared with the main tab. On phones,
+  // pushing 1–2 GB of GPU buffers triggers OOM behavior in iOS Safari
+  // that reaps the tab — which then reloads, reprobes, and reaps again,
+  // an infinite refresh loop. Skip the probe on mobile and substitute a
+  // heuristic based on navigator.deviceMemory; on desktop the GPU process
+  // has enough headroom for the probe to be useful.
+  const heapProbe = await probeHeapBudgetMB();
+  const gpuProbe = isMobile
+    ? { probedMB: 0, error: 'skipped on mobile (would OOM the tab)' }
+    : await probeGpuBudgetMB();
 
   // ── Heap budget ──
   let heapBudgetMB;
@@ -255,13 +264,22 @@ async function _computeBudget() {
   }
 
   // ── GPU budget ──
-  let gpuBudgetMB = gpuProbe.probedMB;
-  let gpuSource = gpuProbe.probedMB > 0
-    ? `probe (WebGPU buffers, ${gpuProbe.probedMB} MB allocated)`
-    : `probe failed: ${gpuProbe.error || 'unknown'}`;
-  if (isMobile && gpuBudgetMB > MOBILE_GPU_CEILING_MB) {
-    gpuBudgetMB = MOBILE_GPU_CEILING_MB;
-    gpuSource += ' → mobile-capped';
+  let gpuBudgetMB;
+  let gpuSource;
+  if (isMobile) {
+    // Heuristic since the probe would OOM the tab. Quarter of the
+    // device's reported RAM, clamped to a sensible range. iPhone WebGPU
+    // typically gives a tab 1.5–2 GB of usable GPU memory before things
+    // start failing; this estimate undershoots slightly to leave margin.
+    const memMB = (memGB || 4) * 1024;
+    gpuBudgetMB = Math.max(512, Math.min(memMB * 0.25, MOBILE_GPU_CEILING_MB));
+    gpuSource = `mobile heuristic (deviceMemory ${memGB ?? '?'} GB × 0.25, clamped 512 MB–${MOBILE_GPU_CEILING_MB} MB)`;
+  } else if (gpuProbe.probedMB > 0) {
+    gpuBudgetMB = gpuProbe.probedMB;
+    gpuSource = `probe (WebGPU buffers, ${gpuProbe.probedMB} MB allocated)`;
+  } else {
+    gpuBudgetMB = 0;
+    gpuSource = `probe failed: ${gpuProbe.error || 'unknown'}`;
   }
 
   return {
