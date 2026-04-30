@@ -25,36 +25,71 @@ const DEFAULT_BUDGET_MB = 2 * 1024;
 const HOSTED_QUOTA_FRACTION = 0.4;
 const HOSTED_QUOTA_CAP_MB = 8 * 1024;
 
-// Hard ceiling on mobile WASM heap regardless of probe result. iOS/Android
-// can reap the tab under system memory pressure without raising a JS error
-// the probe could observe, so an "ok at 4 GiB" result is not safe to trust
-// on a phone.
+// Mobile per-tab budgets. iOS Jetsam reaps the tab when the total of
+// (WASM heap + WebGPU buffers + JS heap + native overhead) crosses the
+// device's threshold — heap and GPU memory aren't separately budgeted
+// the way they are on desktop, they share one tab-process pool. So on
+// mobile we use a single budget number for both heapBudgetMB and
+// gpuBudgetMB; variantFits then checks the model fits within that
+// shared pool.
 //
-// Empirically iOS Safari tabs get reaped well below the WebAssembly.Memory
-// engine cap (~1 GiB on iPhone), and Android Chrome on mid-range devices
-// behaves similarly. Below 500 MB heap usage tends to be safe across
-// modern phones; above that we start seeing tab kills mid-run. The OPFS-
-// streaming model load means model bytes no longer live on the WASM heap,
-// so this budget caps the per-step working set, not the model file.
-const MOBILE_HEAP_CEILING_MB = 500;
+// Numbers below are derived from public reports / Apple docs:
+//
+//  - iPhone WASM practical limit: 300–450 MB
+//      lapcatsoftware.com/articles/2026/1/7.html
+//      news.ycombinator.com/item?id=39039593
+//      github.com/emscripten-core/emscripten/issues/19374
+//      github.com/godotengine/godot/issues/70621 (Godot reduced
+//      WASM_MEM_MAX to 256 MB to eliminate iOS OOM)
+//
+//  - iOS Safari WebGPU maxBufferSize: 256 MB on iPhone 6 / older,
+//    993 MB on iPad Pro M-class. Per-buffer cap, not total.
+//      Apple WWDC 2025 "Unlock GPU computing with WebGPU"
+//
+//  - iPhone 12 Pro reports OOM around 1.5–3 GB but this is the upper
+//    bound; Jetsam typically intervenes much earlier.
+//      developer.apple.com/forums/thread/761666
+//
+// We undershoot to leave margin for KV cache + compute scratch +
+// JS/native overhead inside the same budget.
+const IPHONE_TAB_BUDGET_MB  = 450;
+const IPAD_TAB_BUDGET_MB    = 1500;
+const ANDROID_TAB_BUDGET_MB = 800;
 
-// Hard ceiling on mobile GPU memory probe result. Even when the probe
-// succeeds at higher numbers, the OS may evict the GPU process or the tab
-// before we can actually use it. iPhone WebGPU (Metal-3 under the hood)
-// typically gives a tab 1.5–3 GB usable depending on device class; cap at
-// 3 GB as a conservative ceiling that won't reject anything reasonable.
-const MOBILE_GPU_CEILING_MB = 3 * 1024;
+function detectMobileFamily() {
+  if (typeof navigator === 'undefined') return null;
+  const ua = navigator.userAgent || '';
+  // iPadOS 13+ reports "Macintosh" UA but exposes touch; that's the
+  // standard iPad-detection workaround.
+  if (/iPad/.test(ua)) return 'ipad';
+  if (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform || '')) return 'ipad';
+  if (/iPhone|iPod/.test(ua)) return 'iphone';
+  if (/Android.*Mobile/.test(ua)) return 'android';
+  if (navigator.userAgentData?.mobile === true) return 'android';
+  return null;
+}
+
+function getMobileTabBudgetMB(family) {
+  if (family === 'ipad')    return IPAD_TAB_BUDGET_MB;
+  if (family === 'iphone')  return IPHONE_TAB_BUDGET_MB;
+  if (family === 'android') return ANDROID_TAB_BUDGET_MB;
+  return IPHONE_TAB_BUDGET_MB; // safest default
+}
 
 const PROBE_TIMEOUT_MS = 15_000;
 const GPU_PROBE_STEP_MB = 256;
 const GPU_PROBE_MAX_MB = 8 * 1024;
 const GPU_PROBE_TIMEOUT_MS = 8_000;
 
-// Working-set floor in the WASM heap. KV cache + compute buffers + JS heap
-// headroom for a typical 1B model at n_ctx=2048 add up to ~400 MB; we
-// require 500 to leave a margin. Bigger contexts scale this up — not
-// modeled yet (worth revisiting if we benchmark at n_ctx >> 2048).
-const HEAP_WORKING_SET_FLOOR_MB = 500;
+// Working-set floor in the WASM heap on desktop. KV cache + compute
+// buffers + JS heap headroom for a typical 1B model at n_ctx=2048 add
+// up to ~400 MB; we require 500 to leave a margin. On mobile the
+// heapBudgetMB === gpuBudgetMB === tabBudget so this floor is checked
+// against the same number — works as long as tabBudget ≥ 500, but iPhone
+// is below that, which means iPhone always fails this check. That's
+// intentional: variantFits also has the GPU-fit check, and the floor
+// here is just preventing absurdly-tiny working sets.
+const HEAP_WORKING_SET_FLOOR_MB = 256;
 
 // Per-variant overhead added on top of the model file size when checking
 // GPU fit. Covers compute buffers, alignment padding, and the KV cache
@@ -63,10 +98,7 @@ const HEAP_WORKING_SET_FLOOR_MB = 500;
 const GPU_VARIANT_OVERHEAD_MB = 200;
 
 export function isMobileDevice() {
-  if (typeof navigator === 'undefined') return false;
-  if (navigator.userAgentData?.mobile === true) return true;
-  const ua = navigator.userAgent || '';
-  return /iPhone|iPad|iPod|Android.*Mobile/.test(ua);
+  return detectMobileFamily() !== null;
 }
 
 // ──────────────── WASM heap probe ────────────────
@@ -225,24 +257,45 @@ async function _computeBudget() {
     // some browsers throw on storage.estimate in non-secure contexts
   }
 
-  const isMobile = isMobileDevice();
+  const mobileFamily = detectMobileFamily();
+  const isMobile = mobileFamily !== null;
 
-  // The heap probe is always safe — it runs inside a dedicated worker so
-  // a runaway grow() kills the worker, not the tab.
-  //
-  // The GPU probe is NOT safe on mobile. It allocates real WebGPU buffers
-  // in the GPU process, which is shared with the main tab. On phones,
-  // pushing 1–2 GB of GPU buffers triggers OOM behavior in iOS Safari
-  // that reaps the tab — which then reloads, reprobes, and reaps again,
-  // an infinite refresh loop. Skip the probe on mobile and substitute a
-  // heuristic based on navigator.deviceMemory; on desktop the GPU process
-  // has enough headroom for the probe to be useful.
-  const heapProbe = await probeHeapBudgetMB();
-  const gpuProbe = isMobile
-    ? { probedMB: 0, error: 'skipped on mobile (would OOM the tab)' }
-    : await probeGpuBudgetMB();
+  // ── Mobile path: single shared tab budget ──
+  // iOS Jetsam (and Android equivalents) cap the entire tab process —
+  // WASM heap + WebGPU buffers + JS heap + native overhead all draw from
+  // one pool. The heap probe and GPU probe both burn capacity from that
+  // same pool and can themselves trip Jetsam (the GPU probe especially
+  // — see commit history for the refresh-loop bug). So on mobile we
+  // skip both probes and use a fixed per-device-class budget derived
+  // from public reports of WebKit/Jetsam thresholds (see comments at
+  // top of this file). heapBudgetMB === gpuBudgetMB === tabBudget; the
+  // variantFits check ends up being effectively `model + overhead ≤
+  // tabBudget`.
+  if (isMobile) {
+    const tabBudget = getMobileTabBudgetMB(mobileFamily);
+    return {
+      budgetMB: tabBudget,
+      gpuBudgetMB: tabBudget,
+      heapBudgetMB: tabBudget,
+      memGB,
+      quotaMB,
+      probedMB: 0,
+      gpuProbedMB: 0,
+      probeError: 'skipped on mobile (probes can themselves trip Jetsam)',
+      gpuProbeError: 'skipped on mobile (probes can themselves trip Jetsam)',
+      isMobile: true,
+      mobileFamily,
+      source: `mobile shared tab budget — ${mobileFamily} (${tabBudget} MB total for heap + GPU)`,
+      heapSource: 'same pool as GPU on mobile',
+    };
+  }
 
-  // ── Heap budget ──
+  // ── Desktop path: real probes ──
+  const [heapProbe, gpuProbe] = await Promise.all([
+    probeHeapBudgetMB(),
+    probeGpuBudgetMB(),
+  ]);
+
   let heapBudgetMB;
   let heapSource;
   if (heapProbe.probedMB > 0) {
@@ -258,23 +311,10 @@ async function _computeBudget() {
     heapBudgetMB = DEFAULT_BUDGET_MB;
     heapSource = 'default (heap probe failed)';
   }
-  if (isMobile && heapBudgetMB > MOBILE_HEAP_CEILING_MB) {
-    heapBudgetMB = MOBILE_HEAP_CEILING_MB;
-    heapSource += ' → mobile-capped';
-  }
 
-  // ── GPU budget ──
   let gpuBudgetMB;
   let gpuSource;
-  if (isMobile) {
-    // Heuristic since the probe would OOM the tab. Quarter of the
-    // device's reported RAM, clamped to a sensible range. iPhone WebGPU
-    // typically gives a tab 1.5–2 GB of usable GPU memory before things
-    // start failing; this estimate undershoots slightly to leave margin.
-    const memMB = (memGB || 4) * 1024;
-    gpuBudgetMB = Math.max(512, Math.min(memMB * 0.25, MOBILE_GPU_CEILING_MB));
-    gpuSource = `mobile heuristic (deviceMemory ${memGB ?? '?'} GB × 0.25, clamped 512 MB–${MOBILE_GPU_CEILING_MB} MB)`;
-  } else if (gpuProbe.probedMB > 0) {
+  if (gpuProbe.probedMB > 0) {
     gpuBudgetMB = gpuProbe.probedMB;
     gpuSource = `probe (WebGPU buffers, ${gpuProbe.probedMB} MB allocated)`;
   } else {
@@ -283,9 +323,6 @@ async function _computeBudget() {
   }
 
   return {
-    // Combined headline budget — what the UI shows as "Max model size".
-    // GPU memory is now the constraint that varies per device; heap
-    // budget is a separate floor check.
     budgetMB: gpuBudgetMB,
     gpuBudgetMB,
     heapBudgetMB,
@@ -295,9 +332,8 @@ async function _computeBudget() {
     gpuProbedMB: gpuProbe.probedMB,
     probeError: heapProbe.error || null,
     gpuProbeError: gpuProbe.error || null,
-    isMobile,
-    // Two-line source string so the UI stays compact while still
-    // surfacing both probes in the device card tooltip.
+    isMobile: false,
+    mobileFamily: null,
     source: gpuSource,
     heapSource,
   };
