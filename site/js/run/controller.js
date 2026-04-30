@@ -55,6 +55,10 @@ const state = {
   sessionDownloads: new Set(),
   // Handle to the currently-running worker, so Abort can terminate it.
   currentWorker: null,
+  // Set by runInWorker for the duration of a single worker invocation.
+  // Calling it terminates the worker AND resolves the in-flight Promise
+  // with an aborted record — terminate() alone leaves the Promise pending.
+  currentAbort: null,
   // Build metadata fetched from `build/<variant>/build-info.json`. Stamped
   // onto every result record so we can compare performance across llama.cpp
   // versions. JSPI and Asyncify variants are built from the same source
@@ -1225,8 +1229,11 @@ function runInWorker({
       settled = true;
       try { worker.terminate(); } catch { /* noop */ }
       if (state.currentWorker === worker) state.currentWorker = null;
+      if (state.currentAbort === abortFn) state.currentAbort = null;
       resolve(record);
     };
+    const abortFn = () => finish({ status: 'aborted', error: 'aborted by user' });
+    state.currentAbort = abortFn;
 
     worker.onmessage = (e) => {
       const msg = e.data || {};
@@ -1783,11 +1790,11 @@ function wireAbortHandler() {
     state.aborted = true;
     const ab = $('btn-abort');
     if (ab) ab.disabled = true;
-    // Terminating the worker immediately stops the in-flight iteration —
-    // JSPI/Asyncify loops don't respond to cooperative signals.
-    if (state.currentWorker) {
-      try { state.currentWorker.terminate(); } catch {}
-      state.currentWorker = null;
+    // currentAbort terminates the worker AND resolves runInWorker's Promise.
+    // worker.terminate() alone leaves the Promise pending forever (no
+    // onmessage/onerror fires after termination), which used to lock the UI.
+    if (state.currentAbort) {
+      state.currentAbort();
       logLine('Abort requested — terminated in-flight worker.');
     } else {
       logLine('Abort requested — will stop between variants.');
