@@ -45,6 +45,12 @@ const status = (s, msg, sinceMs) => post({ type: 'status', status: s, msg, since
 // report 100%). Mirror of CONSISTENCY_MIN_TOKENS in core.js.
 const CONSISTENCY_MIN_TOKENS = 8;
 
+// Sleep between perf reps so the GPU clock state can recover. Without
+// this, sustained tg decode reps showed monotonic decay (rep 1 fastest,
+// rep N slowest) — looks like Apple's GPU power-state cooldown.
+const REP_COOLDOWN_MS = 1000;
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 // llama.cpp/ggml emit info, warnings, AND errors all to stderr. Tag only the
 // actually-bad lines as :err so real failures stand out. Mirror in core.js.
 function classifyWasmStderr(text) {
@@ -486,6 +492,7 @@ async function runOne({ params, stream, buffer, opfsPath }) {
           parseBenchResult('bench_pp', raw);
           samples_ns.push(t_ns);
           log(`pp${nPrompt} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nPrompt / t_ns).toFixed(1)} t/s)`);
+          if (i + 1 < nReps) await sleep(REP_COOLDOWN_MS);
         }
         tests.push(buildTest(`pp${nPrompt}`, nPrompt, 0, samples_ns));
       } catch (err) {
@@ -514,6 +521,7 @@ async function runOne({ params, stream, buffer, opfsPath }) {
           parseBenchResult('bench_tg', raw);
           samples_ns.push(t_ns);
           log(`tg${nGen} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nGen / t_ns).toFixed(1)} t/s)`);
+          if (i + 1 < nReps) await sleep(REP_COOLDOWN_MS);
         }
         tests.push(buildTest(`tg${nGen}`, 0, nGen, samples_ns));
       } catch (err) {
