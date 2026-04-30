@@ -107,7 +107,7 @@ async function runBenchActions(Module, {
   // aborting the whole run.
   if (consistencyPrompt) {
     try {
-      onStatus?.('consistency', 'Running consistency check...');
+      onStatus?.('consistency', 'Running consistency check...', Date.now());
       onLog?.(`bench_run("...", ${consistencyNPredict}) — consistency phase`);
       const raw = await Module.ccall(
         'bench_run', 'string',
@@ -160,14 +160,14 @@ async function runBenchActions(Module, {
     if (wantPp) {
       try {
         if (!noWarmup) {
-          onStatus?.('perf', `warmup pp${nPrompt}`);
+          onStatus?.('perf', `warmup pp${nPrompt}`, Date.now());
           onLog?.(`bench_pp(${nPrompt}) — warmup`);
           const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
           parseBenchResult('bench_pp warmup', raw);
         }
         const samples_ns = [];
         for (let i = 0; i < nReps; i++) {
-          onStatus?.('perf', `pp${nPrompt} ${i + 1}/${nReps}`);
+          onStatus?.('perf', `pp${nPrompt} ${i + 1}/${nReps}`, Date.now());
           const t0 = performance.now();
           const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
           const t_ns = (performance.now() - t0) * 1e6;
@@ -184,14 +184,14 @@ async function runBenchActions(Module, {
     if (wantTg) {
       try {
         if (!noWarmup) {
-          onStatus?.('perf', `warmup tg`);
+          onStatus?.('perf', `warmup tg`, Date.now());
           onLog?.('bench_tg(1) — warmup');
           const raw = await Module.ccall('bench_tg', 'string', ['number'], [1], { async: true });
           parseBenchResult('bench_tg warmup', raw);
         }
         const samples_ns = [];
         for (let i = 0; i < nReps; i++) {
-          onStatus?.('perf', `tg${nGen} ${i + 1}/${nReps}`);
+          onStatus?.('perf', `tg${nGen} ${i + 1}/${nReps}`, Date.now());
           const t0 = performance.now();
           const raw = await Module.ccall('bench_tg', 'string', ['number'], [nGen], { async: true });
           const t_ns = (performance.now() - t0) * 1e6;

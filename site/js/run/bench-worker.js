@@ -35,7 +35,10 @@
 
 const post = (msg) => self.postMessage(msg);
 const log = (line) => post({ type: 'log', line });
-const status = (s, msg) => post({ type: 'status', status: s, msg });
+// sinceMs: optional epoch ms. Forwarded to controller so the row ticks an
+// elapsed counter while a long-running ccall (warmup, big-model rep) is in
+// flight — JSPI doesn't yield often enough on CPU paths to drive ticks here.
+const status = (s, msg, sinceMs) => post({ type: 'status', status: s, msg, sinceMs });
 
 // Below this many compared tokens, the consistency agreement rate is
 // statistical noise (e.g. early-EOS models that produce 1 token always
@@ -417,7 +420,7 @@ async function runOne({ params, stream, buffer, opfsPath }) {
   // useful pp/tg numbers via synthetic-token paths.
   if (consistencyPrompt) {
     try {
-      status('consistency', 'Running consistency check...');
+      status('consistency', 'Running consistency check...', Date.now());
       log(`bench_run("...", ${consistencyNPredict}) — consistency phase`);
       const raw = await Module.ccall(
         'bench_run', 'string',
@@ -469,14 +472,14 @@ async function runOne({ params, stream, buffer, opfsPath }) {
     if (wantPp) {
       try {
         if (!noWarmup) {
-          status('perf', `warmup pp${nPrompt}`);
+          status('perf', `warmup pp${nPrompt}`, Date.now());
           log(`bench_pp(${nPrompt}) — warmup`);
           const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
           parseBenchResult('bench_pp warmup', raw);
         }
         const samples_ns = [];
         for (let i = 0; i < nReps; i++) {
-          status('perf', `pp${nPrompt} ${i + 1}/${nReps}`);
+          status('perf', `pp${nPrompt} ${i + 1}/${nReps}`, Date.now());
           const t0 = performance.now();
           const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
           const t_ns = (performance.now() - t0) * 1e6;
@@ -493,14 +496,14 @@ async function runOne({ params, stream, buffer, opfsPath }) {
     if (wantTg) {
       try {
         if (!noWarmup) {
-          status('perf', `warmup tg`);
+          status('perf', `warmup tg`, Date.now());
           log('bench_tg(1) — warmup');
           const raw = await Module.ccall('bench_tg', 'string', ['number'], [1], { async: true });
           parseBenchResult('bench_tg warmup', raw);
         }
         const samples_ns = [];
         for (let i = 0; i < nReps; i++) {
-          status('perf', `tg${nGen} ${i + 1}/${nReps}`);
+          status('perf', `tg${nGen} ${i + 1}/${nReps}`, Date.now());
           const t0 = performance.now();
           const raw = await Module.ccall('bench_tg', 'string', ['number'], [nGen], { async: true });
           const t_ns = (performance.now() - t0) * 1e6;

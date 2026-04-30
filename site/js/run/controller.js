@@ -856,12 +856,29 @@ function progressRowFor(v) {
     `;
     tbody.appendChild(tr);
   }
+  let tickInterval = null;
+  const stopTicker = () => {
+    if (tickInterval !== null) { clearInterval(tickInterval); tickInterval = null; }
+  };
   return {
-    setStatus(status, msg) {
+    // sinceMs: optional epoch ms. When set, the cell ticks once a second so
+    // long-running phases (CPU pp512 warmup, big-model rep calls) show
+    // wall-clock progress instead of looking hung. Cleared on next setStatus.
+    setStatus(status, msg, sinceMs) {
+      stopTicker();
       tr.className = `run-row-${rowClassFor(status)}`;
-      tr.querySelector('.status').textContent = msg ? `${status} — ${msg}` : status;
+      const cell = tr.querySelector('.status');
+      const render = () => {
+        const base = msg ? `${status} — ${msg}` : status;
+        cell.textContent = sinceMs
+          ? `${base} (${Math.floor((Date.now() - sinceMs) / 1000)}s)`
+          : base;
+      };
+      render();
+      if (sinceMs) tickInterval = setInterval(render, 1000);
     },
     setProgress(fraction, downloaded, total) {
+      stopTicker();
       const pct = (fraction * 100).toFixed(1);
       const detail = total > 0
         ? `${pct}% (${formatSize(downloaded / (1024 * 1024))} / ${formatSize(total / (1024 * 1024))})`
@@ -869,6 +886,7 @@ function progressRowFor(v) {
       tr.querySelector('.status').textContent = detail ? `downloading ${detail}` : 'downloading';
     },
     fillFromRecord(record) {
+      stopTicker();
       tr.className = `run-row-${record.status === 'done' ? 'ok' : 'error'}`;
       tr.querySelector('.status').textContent = record.status;
       // Format llama-bench style: "avg \u00b1 stddev" with the test name as
@@ -1219,7 +1237,7 @@ function runInWorker({
 
     worker.onmessage = (e) => {
       const msg = e.data || {};
-      if (msg.type === 'status') onStatus?.(msg.status, msg.msg);
+      if (msg.type === 'status') onStatus?.(msg.status, msg.msg, msg.sinceMs);
       else if (msg.type === 'progress') onProgress?.(msg.fraction, msg.downloaded, msg.total);
       else if (msg.type === 'log') onLog?.(msg.line);
       else if (msg.type === 'result') finish(msg.record);
@@ -1454,7 +1472,7 @@ async function runVariantWithIterations(v, row) {
         nCtx: DEFAULT_N_CTX,
         nGpuLayers: 0,
       }, {
-        onStatus: (status, msg) => row.setStatus(`cpu/${status}`, msg),
+        onStatus: (status, msg, sinceMs) => row.setStatus(`cpu/${status}`, msg, sinceMs),
         onProgress: (fr, downloaded, total) => row.setProgress(fr, downloaded, total),
         onLog: logLine,
       });
@@ -1499,7 +1517,7 @@ async function runVariantWithIterations(v, row) {
       nCtx: DEFAULT_N_CTX,
       nGpuLayers: DEFAULT_N_GPU_LAYERS,
     }, {
-      onStatus: (s, m) => row.setStatus(`gpu/${s}`, m),
+      onStatus: (s, m, sinceMs) => row.setStatus(`gpu/${s}`, m, sinceMs),
       onProgress: (fr, d, t) => row.setProgress(fr, d, t),
       onLog: logLine,
     });
