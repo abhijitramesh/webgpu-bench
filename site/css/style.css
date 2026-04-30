@@ -753,6 +753,68 @@ a:hover { color: var(--info); }
   letter-spacing: -0.02em;
 }
 
+/* Run page how-to-use instructions — collapsible card, open by default. */
+.run-instructions {
+  margin-bottom: 20px;
+}
+.run-instructions > summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--foreground);
+  list-style: none;
+  padding: 4px 0;
+}
+.run-instructions > summary::-webkit-details-marker { display: none; }
+.run-instructions > summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 8px;
+  transition: transform 0.15s ease;
+  color: var(--foreground-muted);
+}
+.run-instructions[open] > summary::before { transform: rotate(90deg); }
+.run-instructions-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 24px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.run-instructions-body section { font-size: 13px; line-height: 1.55; }
+.run-instructions-body h3 {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.run-instructions-body p,
+.run-instructions-body ol,
+.run-instructions-body dl { margin: 0 0 8px; color: var(--foreground-muted); }
+.run-instructions-body ol { padding-left: 20px; }
+.run-instructions-body ol li + li { margin-top: 4px; }
+.run-instructions-body code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--surface-2, rgba(0,0,0,0.05));
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.run-instructions-dl dt {
+  font-size: 12px;
+  margin-top: 8px;
+  color: var(--foreground);
+}
+.run-instructions-dl dt:first-child { margin-top: 0; }
+.run-instructions-dl dd {
+  margin: 2px 0 0;
+  padding-left: 0;
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+
 /* Run page hero row — matches the size of the Methodology h1 / index
    hero-title (28px). Houses the mode badge inline. */
 .run-hero {

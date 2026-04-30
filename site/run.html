@@ -50,6 +50,74 @@
           <span id="run-mode-badge" class="badge run-mode-badge">…</span>
         </div>
 
+        <!-- How-to-use guide — collapsible so it doesn't dominate the page
+             for repeat users, but open by default so first-timers see it. -->
+        <details class="card run-instructions" open>
+          <summary><strong>How to use this page</strong> — quick start, run modes, and configuration knobs</summary>
+          <div class="run-instructions-body">
+            <section>
+              <h3>Quick start</h3>
+              <ol>
+                <li>The three cards above show your <strong>device</strong>, its <strong>capabilities</strong>, and the safe <strong>model budget</strong> (largest variant that should fit without exhausting GPU/WASM memory).</li>
+                <li>Pick variants in the <strong>Models</strong> panel below — or use the <em>Quick set</em> / <em>All fit</em> selection buttons.</li>
+                <li>Click <strong>Run study</strong> for a curated comparison set, <strong>Run benchmarks</strong> for whatever you've checked, or <strong>Download selected</strong> to just cache files for later.</li>
+              </ol>
+            </section>
+
+            <section>
+              <h3>Run modes</h3>
+              <dl class="run-instructions-dl">
+                <dt><strong>Run study</strong></dt>
+                <dd>Curated, opinionated set: <code>Llama-3.2-1B-Instruct</code> at <code>Q2_K</code> / <code>Q4_K_M</code> / <code>Q8_0</code> / <code>F16</code>, plus every other model at <code>Q4_K_M</code>, filtered to what fits this device. Use this for apples-to-apples comparison across machines.</dd>
+                <dt><strong>Run benchmarks</strong></dt>
+                <dd>Runs whatever variants you've explicitly checked in the Models panel. Use this when you want to drill into a specific model or quant family.</dd>
+                <dt><strong>Download selected</strong></dt>
+                <dd>Caches the checked variants to OPFS without running them. Useful for pre-warming before a flight or running offline later.</dd>
+                <dt><strong>Abort</strong></dt>
+                <dd>Cancels the in-flight worker AND any concurrent download. Aborted variants get an "aborted" status; subsequent variants do not run.</dd>
+                <dt><strong>Purge OPFS cache</strong></dt>
+                <dd>Wipes every cached GGUF from browser storage. Only shown on hosted surfaces; helpful when the device is low on disk.</dd>
+              </dl>
+            </section>
+
+            <section>
+              <h3>What each run does</h3>
+              <p>Each variant is exercised in two passes (skippable — see <em>Skip</em> below):</p>
+              <ol>
+                <li><strong>CPU baseline</strong> — generates reference token IDs (for consistency) and a 1-rep CPU perf sample, so the dashboard can show CPU-vs-GPU.</li>
+                <li><strong>GPU pass</strong> — forced-decodes the CPU tokens to compute a top-1 agreement rate (consistency), then runs a llama-bench-style perf sweep: one warmup + <code>reps</code> timed reps for both prompt processing (<code>pp</code>) and token generation (<code>tg</code>). 1-second cooldown between reps lets the GPU clock recover, so reps stay comparable instead of decaying across the sweep.</li>
+              </ol>
+            </section>
+
+            <section>
+              <h3>Configuration</h3>
+              <dl class="run-instructions-dl">
+                <dt><strong>Search / Hide</strong></dt>
+                <dd>Filter the Models panel. <em>Hide</em> toggles drop UD (Unsloth dynamic), IQ (i-quants), and BF16/F16 high-precision variants — useful when you only care about the "standard" K-quant lineup.</dd>
+                <dt><strong>Select: Quick set / All fit / None</strong></dt>
+                <dd><em>Quick set</em> = the same variants Run study uses. <em>All fit</em> = every variant under your device budget. <em>None</em> = clear the selection.</dd>
+                <dt><strong>Prompt tokens (-p)</strong></dt>
+                <dd>How many synthetic tokens go through prompt processing for the <code>pp</code> test. Default <code>512</code>. Larger = more compute-bound.</dd>
+                <dt><strong>Gen tokens (-n)</strong></dt>
+                <dd>How many tokens are generated for the <code>tg</code> test. Default <code>128</code>. Larger reps stress sustained decode bandwidth.</dd>
+                <dt><strong>Reps (-r)</strong></dt>
+                <dd>Timed repetitions of each test (after warmup). Default <code>5</code>. The reported figure is mean ± stddev across the reps.</dd>
+                <dt><strong>Skip: Consistency</strong></dt>
+                <dd>Skips the CPU-baseline + GPU-forced-decode agreement check. Use when consistency is failing on a device or you only need perf numbers.</dd>
+                <dt><strong>Skip: CPU perf</strong></dt>
+                <dd>Skips the 1-rep CPU perf baseline. Use on devices where the CPU pass is too slow or unstable to be worth waiting for.</dd>
+                <dt><strong>Evict cached GGUFs after each run</strong></dt>
+                <dd>Frees OPFS storage as the queue moves through variants. Only evicts files this session downloaded — files you cached before the run are preserved.</dd>
+              </dl>
+            </section>
+
+            <section>
+              <h3>Reading the output</h3>
+              <p>The <strong>Progress</strong> table updates per-variant with live status (download → cpu → gpu → done). Final per-variant numbers fill the <code>pp tok/s</code> and <code>tg tok/s</code> columns as <code>mean ± stddev</code>. The <strong>Output</strong> textarea below contains the full JSON record — copy it, download it, or (on the HF Space) sign in to submit to the leaderboard.</p>
+            </section>
+          </div>
+        </details>
+
         <!-- Read-only banner (shown on any hosted surface that isn't the HF
              Space — e.g. a mirror or preview deploy where OAuth isn't set up). -->
         <div id="run-pages-banner" class="run-pages-banner" hidden>
