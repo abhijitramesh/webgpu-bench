@@ -3,7 +3,7 @@
 // classes. Detects `surface` (localhost / space / pages) to gate the
 // server save checkbox and the HF hub sign-in/submit row.
 
-import { localSource, hostedSource, inventoryOpfs, purgeOpfs } from './source.js';
+import { localSource, hostedSource, inventoryOpfs, purgeOpfs, OPFS_ROOT_NAME } from './source.js';
 import { getDeviceBudgetMB, variantFits, describeDevice, isMobileDevice } from './device.js';
 import {
   resumeHFSession, beginHFSignIn, signOutHF, submitResultsToDataset,
@@ -1181,7 +1181,7 @@ async function onRunClick() {
 function runInWorker({
   params,
   stream,
-  fileHandle,
+  opfsPath,
   onStatus,
   onProgress,
   onLog,
@@ -1223,14 +1223,16 @@ function runInWorker({
     };
 
     // Three transport modes — see bench-worker.js runOne() for matching shape.
-    if (fileHandle) {
-      // OPFS path: FileSystemFileHandle is structured-cloneable, not
-      // transferable. The worker creates its own sync access handle on the
-      // cloned reference (still bound to the same underlying OPFS file).
+    if (opfsPath) {
+      // OPFS path: send the layout key only (rootDir + repo + filename).
+      // The worker re-resolves to a FileSystemFileHandle via
+      // navigator.storage.getDirectory() itself. Plain JSON-serializable —
+      // works on iOS Safari, where FileSystemFileHandle structured-clone
+      // is not implemented.
       try {
-        worker.postMessage({ type: 'run', params, fileHandle });
+        worker.postMessage({ type: 'run', params, opfsPath });
       } catch (err) {
-        finish({ status: 'error', error: `postMessage(fileHandle) failed: ${err.message}` });
+        finish({ status: 'error', error: `postMessage(opfsPath) failed: ${err.message}` });
       }
       return;
     }
@@ -1350,14 +1352,13 @@ async function runBenchmarkInWorker(v, params, callbacks) {
   };
 
   if (useOpfs) {
-    let fileHandle, contentLength;
+    let contentLength;
     try {
       callbacks.onStatus?.('downloading', 'Downloading model to OPFS...');
       const r = await state.source.opfsHandleForModel(
         v.repo, v.filename,
         callbacks.onProgress,
       );
-      fileHandle = r.handle;
       contentLength = r.size;
       // When the prefetch is skipped (mobile path), the inline download
       // above is the variant's first arrival in OPFS. Mark it as
@@ -1371,9 +1372,14 @@ async function runBenchmarkInWorker(v, params, callbacks) {
     } catch (err) {
       return { status: 'error', error: `opfsHandleForModel failed: ${err.message}` };
     }
+    // Pass the OPFS path components, not the FileHandle. iOS Safari
+    // (and some older Chromium/Firefox versions) can't structured-clone
+    // FileSystemFileHandle across postMessage. The worker re-resolves the
+    // handle via navigator.storage.getDirectory() itself, which works
+    // everywhere OPFS is supported.
     return runInWorker({
       params: { ...baseParams, contentLength },
-      fileHandle,
+      opfsPath: { rootDir: OPFS_ROOT_NAME, repo: v.repo, filename: v.filename },
       onStatus: callbacks.onStatus,
       onProgress: callbacks.onProgress,
       onLog: callbacks.onLog,

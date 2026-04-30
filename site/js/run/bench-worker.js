@@ -102,6 +102,23 @@ function patchMEMFS(Module) {
   m.MEMFS.ops_table.file.stream.mmap = m.MEMFS.stream_ops.mmap;
 }
 
+// Resolve an OPFS path (rootDir + repo segments + filename) to a
+// FileSystemFileHandle inside this worker. Works around the iOS Safari
+// limitation that FileSystemFileHandle isn't structured-cloneable across
+// postMessage — main thread sends the layout key, worker opens the
+// handle locally.
+async function resolveOpfsHandle({ rootDir, repo, filename }) {
+  if (!self.navigator?.storage?.getDirectory) {
+    throw new Error('OPFS not available in this worker');
+  }
+  let dir = await self.navigator.storage.getDirectory();
+  dir = await dir.getDirectoryHandle(rootDir, { create: false });
+  for (const seg of String(repo).split('/').filter(Boolean)) {
+    dir = await dir.getDirectoryHandle(seg, { create: false });
+  }
+  return dir.getFileHandle(filename, { create: false });
+}
+
 async function opfsAlloc(Module, name, fileHandle) {
   // createSyncAccessHandle is worker-only and exclusive — only one writer
   // per OPFS file at a time. Caller must ensure no createWritable session
@@ -189,7 +206,7 @@ self.onmessage = async (e) => {
   }
 };
 
-async function runOne({ params, stream, buffer, fileHandle }) {
+async function runOne({ params, stream, buffer, opfsPath }) {
   const {
     buildType,
     contentLength,
@@ -206,13 +223,16 @@ async function runOne({ params, stream, buffer, fileHandle }) {
     noWarmup,
   } = params;
   // Three input modes are supported:
-  //   fileHandle  → wllama-style OPFS-streaming load (preferred for >2GB)
+  //   opfsPath    → wllama-style OPFS-streaming load (preferred for >2GB).
+  //                  Resolved to a FileSystemFileHandle inside the worker
+  //                  via navigator.storage.getDirectory() — FileHandles
+  //                  themselves don't structured-clone reliably (iOS Safari).
   //   stream      → heap-stream mode (zero-copy WASM-heap, transferable)
   //   buffer      → buffered fallback for browsers without transferable streams
   // Exactly one must be provided.
-  const inputCount = (fileHandle ? 1 : 0) + (stream ? 1 : 0) + (buffer ? 1 : 0);
+  const inputCount = (opfsPath ? 1 : 0) + (stream ? 1 : 0) + (buffer ? 1 : 0);
   if (inputCount !== 1) {
-    throw new Error('runOne: exactly one of `fileHandle`, `stream`, or `buffer` must be provided');
+    throw new Error('runOne: exactly one of `opfsPath`, `stream`, or `buffer` must be provided');
   }
 
   const result = {
@@ -282,10 +302,11 @@ async function runOne({ params, stream, buffer, fileHandle }) {
   //               in, register a heap-backed MEMFS file. Faster (mmap'd
   //               zero-copy at load time) but caps at ~2GB.
   let modelPtr = 0;  // tracks heap-path allocation for cleanup
-  const useOpfsPath = !!fileHandle;
+  const useOpfsPath = !!opfsPath;
 
   if (useOpfsPath) {
     status('opfs', 'Linking OPFS-backed model into MEMFS...');
+    const fileHandle = await resolveOpfsHandle(opfsPath);
     patchMEMFS(Module);
     const size = await opfsAlloc(Module, 'model.gguf', fileHandle);
     log(`OPFS-backed model.gguf registered (${(size / (1024 * 1024)).toFixed(1)} MB)`);

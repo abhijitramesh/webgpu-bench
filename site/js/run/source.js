@@ -56,7 +56,12 @@ export function localSource() {
 
 // ──────────────── hosted / OPFS ────────────────
 
-const OPFS_ROOT_NAME = 'models';
+// Exported so bench-worker.js can re-resolve the OPFS file handle inside
+// the worker. We can't transfer FileSystemFileHandle directly across
+// postMessage on every browser (iOS Safari structured-clone is missing
+// the implementation), so instead we send the layout key (rootDir +
+// repo segments + filename) and let the worker open it itself.
+export const OPFS_ROOT_NAME = 'models';
 
 async function getOpfsRoot() {
   if (!navigator.storage?.getDirectory) {

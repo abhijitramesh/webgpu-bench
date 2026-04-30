@@ -21,7 +21,17 @@ const HOSTED_QUOTA_CAP_MB = 8 * 1024;
 // the tab under system memory pressure without raising a JS error the
 // probe could observe, so an "ok at 4 GiB" result is not safe to trust on
 // a phone — the OS gets the last word.
-const MOBILE_BUDGET_CEILING_MB = 600;
+//
+// Empirically iOS Safari tabs get reaped well below the WebAssembly.Memory
+// engine cap (~1 GiB on iPhone), and Android Chrome on mid-range devices
+// behaves similarly. Below 500 MB heap usage tends to be safe across
+// modern phones; above that we start seeing tab kills mid-run. The OPFS-
+// streaming model load means model bytes no longer live on the WASM heap,
+// so this budget now caps KV cache + compute scratch + JS heap headroom,
+// not the model file itself — fitting variants no longer means "model
+// fits in memory" but "the per-step working set fits". variantFits
+// applies the per-variant 1.5× factor on top of this for safety margin.
+const MOBILE_BUDGET_CEILING_MB = 500;
 
 const PROBE_TIMEOUT_MS = 15_000;
 
