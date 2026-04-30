@@ -10,6 +10,17 @@ const DEFAULT_N_PROMPT = 512;
 const DEFAULT_N_GEN = 128;
 const DEFAULT_N_REPS = 5;
 
+// Below this many compared tokens, the agreement rate is statistical noise
+// (e.g. early-EOS models that produce 1 token will always report 100%).
+const CONSISTENCY_MIN_TOKENS = 8;
+
+// llama.cpp/ggml emit info, warnings, AND errors all to stderr. Tag only the
+// actually-bad lines as :err so real failures stand out from routine output.
+function classifyWasmStderr(text) {
+  return /\b(error|abort(ed)?|failed|fatal|panic|assert)\b|GGML_ASSERT/i.test(text)
+    ? '[wasm:err]' : '[wasm]';
+}
+
 async function loadBenchScriptOnce(buildType) {
   if (typeof globalThis.createBenchModule === 'function') return;
   const script = document.createElement('script');
@@ -118,11 +129,18 @@ async function runBenchActions(Module, {
         );
         const ev = parseBenchResult('bench_eval_tokens', evalRaw);
         out.consistency = { ...out.consistency, ...ev };
-        onLog?.(
-          `Consistency: ${(ev.agreement_rate * 100).toFixed(1)}% top-1 agreement (` +
-          `${ev.n_agree}/${ev.n_tokens})` +
-          (ev.first_disagreement >= 0 ? ` — first diverge @ ${ev.first_disagreement}` : '')
-        );
+        if (ev.n_tokens < CONSISTENCY_MIN_TOKENS) {
+          onLog?.(
+            `Consistency: insufficient samples (${ev.n_tokens} token` +
+            `${ev.n_tokens === 1 ? '' : 's'} before EOS) — agreement rate not meaningful`
+          );
+        } else {
+          onLog?.(
+            `Consistency: ${(ev.agreement_rate * 100).toFixed(1)}% top-1 agreement (` +
+            `${ev.n_agree}/${ev.n_tokens})` +
+            (ev.first_disagreement >= 0 ? ` — first diverge @ ${ev.first_disagreement}` : '')
+          );
+        }
       }
     } catch (err) {
       onLog?.(`Consistency phase failed: ${err.message} — continuing to perf phase`);
@@ -269,7 +287,7 @@ export async function runBenchmarkCore({
 
     Module = await globalThis.createBenchModule({
       print: (text) => onLog(`[wasm] ${text}`),
-      printErr: (text) => onLog(`[wasm:err] ${text}`),
+      printErr: (text) => onLog(`${classifyWasmStderr(text)} ${text}`),
       onAbort: (reason) => {
         const msg = `WASM aborted: ${reason}`;
         result.error = msg;

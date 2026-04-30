@@ -37,6 +37,18 @@ const post = (msg) => self.postMessage(msg);
 const log = (line) => post({ type: 'log', line });
 const status = (s, msg) => post({ type: 'status', status: s, msg });
 
+// Below this many compared tokens, the consistency agreement rate is
+// statistical noise (e.g. early-EOS models that produce 1 token always
+// report 100%). Mirror of CONSISTENCY_MIN_TOKENS in core.js.
+const CONSISTENCY_MIN_TOKENS = 8;
+
+// llama.cpp/ggml emit info, warnings, AND errors all to stderr. Tag only the
+// actually-bad lines as :err so real failures stand out. Mirror in core.js.
+function classifyWasmStderr(text) {
+  return /\b(error|abort(ed)?|failed|fatal|panic|assert)\b|GGML_ASSERT/i.test(text)
+    ? '[wasm:err]' : '[wasm]';
+}
+
 // ─── OPFS-backed model loading (wllama-style) ───
 // For >2GB GGUFs we can't put the whole file on the WASM heap (TypedArray
 // length limits, and it eats the heap budget that KV cache + working memory
@@ -283,7 +295,7 @@ async function runOne({ params, stream, buffer, opfsPath }) {
   const Module = await self.createBenchModule({
     locateFile: (filename) => `/build/${buildType}/${filename}`,
     print: (text) => log(`[wasm] ${text}`),
-    printErr: (text) => log(`[wasm:err] ${text}`),
+    printErr: (text) => log(`${classifyWasmStderr(text)} ${text}`),
     onAbort: (reason) => {
       const msg = `WASM aborted: ${reason}`;
       result.error = msg;
@@ -427,11 +439,18 @@ async function runOne({ params, stream, buffer, opfsPath }) {
         );
         const ev = parseBenchResult('bench_eval_tokens', evalRaw);
         result.consistency = { ...result.consistency, ...ev };
-        log(
-          `Consistency: ${(ev.agreement_rate * 100).toFixed(1)}% top-1 agreement (` +
-          `${ev.n_agree}/${ev.n_tokens})` +
-          (ev.first_disagreement >= 0 ? ` — first diverge @ ${ev.first_disagreement}` : '')
-        );
+        if (ev.n_tokens < CONSISTENCY_MIN_TOKENS) {
+          log(
+            `Consistency: insufficient samples (${ev.n_tokens} token` +
+            `${ev.n_tokens === 1 ? '' : 's'} before EOS) — agreement rate not meaningful`
+          );
+        } else {
+          log(
+            `Consistency: ${(ev.agreement_rate * 100).toFixed(1)}% top-1 agreement (` +
+            `${ev.n_agree}/${ev.n_tokens})` +
+            (ev.first_disagreement >= 0 ? ` — first diverge @ ${ev.first_disagreement}` : '')
+          );
+        }
       }
     } catch (err) {
       log(`Consistency phase failed: ${err.message} — continuing to perf phase`);
