@@ -472,10 +472,15 @@ async function runOne({ params, stream, buffer, opfsPath }) {
     if (wantPp) {
       try {
         if (!noWarmup) {
-          status('perf', `warmup pp${nPrompt}`, Date.now());
-          log(`bench_pp(${nPrompt}) — warmup`);
-          const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
-          parseBenchResult('bench_pp warmup', raw);
+          // 2 passes: rep 1 of timed reps consistently ran at ~50% throughput
+          // with a single warmup, suggesting the WebGPU pipeline cache /
+          // shader compile only fully primes after the second dispatch.
+          for (let w = 0; w < 2; w++) {
+            status('perf', `warmup pp${nPrompt} ${w + 1}/2`, Date.now());
+            log(`bench_pp(${nPrompt}) — warmup ${w + 1}/2`);
+            const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
+            parseBenchResult('bench_pp warmup', raw);
+          }
         }
         const samples_ns = [];
         for (let i = 0; i < nReps; i++) {
@@ -496,10 +501,12 @@ async function runOne({ params, stream, buffer, opfsPath }) {
     if (wantTg) {
       try {
         if (!noWarmup) {
-          status('perf', `warmup tg`, Date.now());
-          log('bench_tg(1) — warmup');
-          const raw = await Module.ccall('bench_tg', 'string', ['number'], [1], { async: true });
-          parseBenchResult('bench_tg warmup', raw);
+          for (let w = 0; w < 2; w++) {
+            status('perf', `warmup tg ${w + 1}/2`, Date.now());
+            log(`bench_tg(1) — warmup ${w + 1}/2`);
+            const raw = await Module.ccall('bench_tg', 'string', ['number'], [1], { async: true });
+            parseBenchResult('bench_tg warmup', raw);
+          }
         }
         const samples_ns = [];
         for (let i = 0; i < nReps; i++) {
