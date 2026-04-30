@@ -14,7 +14,6 @@ import { isHubConfigured, HF_DATASET_REPO } from './config.js';
 const RUN_INTENT_STORAGE_KEY = 'webgpu-bench:runIntent';
 const CRASH_STALE_MS = 10_000;
 
-const OVERHEAD = 1.5;
 const DEFAULT_PROMPT =
   'Explain quantum computing to a software engineer in four concise paragraphs. ' +
   'Cover superposition, entanglement, quantum gates, and one practical use case.';
@@ -176,7 +175,15 @@ function computeWarnings(modelName, quant) {
 }
 
 function cacheKey(v) { return `${v.repo}/${v.filename}`; }
-function variantFitsDevice(v) { return variantFits(v.sizeMB, state.budget.budgetMB, OVERHEAD); }
+function variantFitsDevice(v) {
+  // New variantFits signature: pass both budgets so the predicate can
+  // check (a) model fits in GPU memory + small overhead, and (b) WASM
+  // heap can hold the working set. See device.js for the rationale.
+  return variantFits(v.sizeMB, {
+    gpuBudgetMB: state.budget.gpuBudgetMB,
+    heapBudgetMB: state.budget.heapBudgetMB,
+  });
+}
 function isCached(v) {
   const entry = state.cacheStatus[cacheKey(v)];
   return !!entry && entry.cachedBytes > 0;
@@ -272,9 +279,14 @@ function renderHeader() {
   const memStr = b.memGB !== null ? `${b.memGB} GB` : '—';
   $('device-memory').textContent = memStr;
 
+  // budgetMB is now the GPU-memory budget (per device.js _computeBudget),
+  // since with OPFS streaming the model lives in WebGPU buffers, not the
+  // WASM heap. We surface the heap budget separately in the source line so
+  // a curious reader can see both probes' results.
   const budgetGB = (b.budgetMB / 1024).toFixed(1);
+  const heapGB = (b.heapBudgetMB / 1024).toFixed(1);
   $('device-budget').textContent = `${budgetGB} GB`;
-  $('device-budget-source').textContent = `source: ${b.source}`;
+  $('device-budget-source').textContent = `GPU memory · WASM heap: ${heapGB} GB`;
 
   const webgpuCell = $('device-webgpu');
   if (webgpuCell) {
