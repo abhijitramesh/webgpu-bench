@@ -1918,12 +1918,6 @@ a:hover { color: var(--info); }
   font-size: 12px;
   font-family: var(--font-mono);
 }
-.run-family-warning {
-  margin-left: auto;
-  color: var(--accent-amber);
-  font-size: 11px;
-  font-weight: 600;
-}
 
 .run-variant-list {
   display: flex;

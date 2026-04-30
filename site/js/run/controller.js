@@ -168,10 +168,10 @@ function isQuickVariant(v) {
 }
 
 function computeWarnings(modelName, quant) {
-  const w = [];
-  if (/^granite-4/i.test(modelName)) w.push('needs SSM_SCAN');
-  if (quant === 'Q1_0') w.push('needs Q1_0');
-  return w;
+  // SSM_SCAN and Q1_0 are both supported in the bundled llama.cpp
+  // (ggml-webgpu.cpp). granite-4 ran cleanly in the apr-30 run; Q1_0 is
+  // wired into the fast-path dequant table. No warnings to surface today.
+  return [];
 }
 
 function cacheKey(v) { return `${v.repo}/${v.filename}`; }
@@ -432,13 +432,6 @@ function renderModels() {
     stats.textContent = `${variants.length} variants · ${fitsCount} fit · ${quickFitCount} quick`;
 
     header.append(toggleBtn, selectAll, nameLabel, paramChip, stats);
-
-    if (/^granite-4/i.test(family)) {
-      const w = document.createElement('span');
-      w.className = 'run-family-warning';
-      w.textContent = '⚠ needs SSM_SCAN in llama.cpp';
-      header.appendChild(w);
-    }
     familyEl.appendChild(header);
 
     const list = document.createElement('div');

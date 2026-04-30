@@ -21,7 +21,7 @@ node server.js
 
 Run-page flow:
 1. Three device cards show browser + platform + GPU, deviceMemory + WebGPU support, and the estimated safe model budget.
-2. **Models panel** lists all 194 variants grouped by family. Every variant is checked by default; variants that exceed the budget are dimmed and unchecked. `Granite 4.0 h-1b` shows a "needs SSM_SCAN" badge; `Bonsai-1.7B-Q1_0` shows a "needs Q1_0" badge. Uncheck whatever you don't want to run.
+2. **Models panel** lists all 194 variants grouped by family. Every variant is checked by default; variants that exceed the budget are dimmed and unchecked. Uncheck whatever you don't want to run.
 3. **`[Download selected]`** streams GGUFs through the local proxy (`cache/models/`). Per-row byte progress.
 4. **`[Run benchmarks]`** runs each cached variant through `runBenchmarkCore()` sequentially. A crash in one variant doesn't halt the queue.
 5. **Output** — copy the markdown block or download JSON. When served from `localhost:3000`, a checkbox appends each record to `results/results.json` as runner.js does.
@@ -340,8 +340,8 @@ for f in json.load(sys.stdin):
 | Ministral-3-3B-Instruct-2512 | unsloth | 26 |
 | Qwen3.5-2B | unsloth | 22 |
 | gemma-4-E2B-it | unsloth | 21 |
-| granite-4.0-h-1b | ibm-granite | 15 (needs `SSM_SCAN` in llama.cpp) |
-| Bonsai-1.7B | prism-ml | 2 (Q1_0 variant needs `Q1_0` quant support) |
+| granite-4.0-h-1b | ibm-granite | 15 |
+| Bonsai-1.7B | prism-ml | 2 |
 
 Run `node scripts/fill-sizes.mjs` after editing the list to HEAD each file on HF and populate `sizeMB`.
 
