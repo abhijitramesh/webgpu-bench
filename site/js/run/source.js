@@ -100,14 +100,16 @@ export function hostedSource() {
     // path: the worker opens a sync access handle on this FileHandle and
     // routes MEMFS reads through it, never copying the model into the
     // WASM heap. onProgress is called during the download leg with
-    // (fraction, downloaded, total).
+    // (fraction, downloaded, total). The returned `wasDownloaded` flag
+    // distinguishes a fresh download from a cache hit so the caller can
+    // decide whether to mark the variant for post-run eviction.
     async opfsHandleForModel(repo, file, onProgress) {
       const cached = await getOpfsFileHandle(repo, file, { create: false }).catch(() => null);
       if (cached) {
         const f = await cached.getFile();
         if (f.size > 0) {
           onProgress?.(1, f.size, f.size);
-          return { handle: cached, size: f.size };
+          return { handle: cached, size: f.size, wasDownloaded: false };
         }
       }
 
@@ -136,7 +138,7 @@ export function hostedSource() {
           if (contentLength > 0) onProgress?.(downloaded / contentLength, downloaded, contentLength);
         }
         await writable.close();
-        return { handle, size: downloaded };
+        return { handle, size: downloaded, wasDownloaded: true };
       } catch (err) {
         try { await writable.abort(err); } catch { /* ignore */ }
         throw err;

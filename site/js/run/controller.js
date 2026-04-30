@@ -4,7 +4,7 @@
 // server save checkbox and the HF hub sign-in/submit row.
 
 import { localSource, hostedSource, inventoryOpfs, purgeOpfs } from './source.js';
-import { getDeviceBudgetMB, variantFits, describeDevice } from './device.js';
+import { getDeviceBudgetMB, variantFits, describeDevice, isMobileDevice } from './device.js';
 import {
   resumeHFSession, beginHFSignIn, signOutHF, submitResultsToDataset,
   HF_OAUTH_PENDING_KEY,
@@ -1047,14 +1047,28 @@ async function onRunClick() {
   state.sessionDownloads = new Set();
   updateButtons();
 
+  if (isMobileDevice()) {
+    logLine(
+      'Mobile device — running with sequential downloads (no parallel prefetch). ' +
+      'Each variant downloads, runs, evicts, then the next begins.',
+    );
+  }
+
   const machine = await machineInfo();
   const browser = browserInfo();
   const evictAfter = !!$('evict-after-run')?.checked;
 
   // One-ahead prefetch: while variant i runs, we may have variant i+1
   // downloading. Only one prefetch in flight at a time.
+  // On mobile, the overlap is a measurement hazard — concurrent download
+  // contends with inference for SoC power, memory bandwidth, and OPFS
+  // write queues. Skip the prefetch entirely; runBenchmarkInWorker's
+  // opfsHandleForModel does the download inline (with the same progress
+  // events the prefetch row would have shown).
+  const skipPrefetch = isMobileDevice();
   const prefetchFor = async (v) => {
     if (!v || isCached(v)) return;
+    if (skipPrefetch) return;
     const row = progressRowFor(v);
     row.setStatus('prefetching', '');
     try {
@@ -1090,7 +1104,10 @@ async function onRunClick() {
     // Wait for variant i to be cached (either via prefetch or pre-existing).
     await prefetchPromise;
     if (state.aborted) break;
-    if (!isCached(v)) {
+    // When skipPrefetch is on (mobile), variants arrive uncached and
+    // runBenchmarkInWorker → opfsHandleForModel handles the inline
+    // download. Skip the cache-check error path in that case.
+    if (!skipPrefetch && !isCached(v)) {
       row.setStatus('error', 'not cached after prefetch');
       prefetchPromise = prefetchFor(variants[i + 1]);
       continue;
@@ -1342,6 +1359,15 @@ async function runBenchmarkInWorker(v, params, callbacks) {
       );
       fileHandle = r.handle;
       contentLength = r.size;
+      // When the prefetch is skipped (mobile path), the inline download
+      // above is the variant's first arrival in OPFS. Mark it as
+      // session-downloaded so the post-run eviction logic frees it before
+      // the next variant starts — keeping disk usage flat.
+      if (r.wasDownloaded) {
+        state.sessionDownloads.add(cacheKey(v));
+        state.cacheStatus[cacheKey(v)] = { cachedBytes: r.size };
+        refreshCacheBadge(v);
+      }
     } catch (err) {
       return { status: 'error', error: `opfsHandleForModel failed: ${err.message}` };
     }
