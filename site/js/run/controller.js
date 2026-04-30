@@ -55,16 +55,26 @@ const state = {
   sessionDownloads: new Set(),
   // Handle to the currently-running worker, so Abort can terminate it.
   currentWorker: null,
-  // Set by runInWorker for the duration of a single worker invocation.
-  // Calling it terminates the worker AND resolves the in-flight Promise
-  // with an aborted record — terminate() alone leaves the Promise pending.
-  currentAbort: null,
+  // Set of fns that abort an in-flight async op (worker terminate, fetch
+  // signal abort). Multiple concurrent ops register here — Run study has a
+  // worker running variant i AND a prefetch downloading variant i+1, both
+  // of which need to be cancellable. Abort handler iterates the whole set.
+  abortHandlers: new Set(),
   // Build metadata fetched from `build/<variant>/build-info.json`. Stamped
   // onto every result record so we can compare performance across llama.cpp
   // versions. JSPI and Asyncify variants are built from the same source
   // tree, so a single fetch is enough; both files would be identical.
   buildInfo: null,
 };
+
+// Register an abort callback for an in-flight async op (worker terminate,
+// fetch signal abort, etc.). Returns an unregister fn the caller MUST
+// invoke when the op settles, so we don't accumulate stale handlers across
+// runs. Abort handler iterates state.abortHandlers and calls every fn.
+function registerAbort(fn) {
+  state.abortHandlers.add(fn);
+  return () => state.abortHandlers.delete(fn);
+}
 
 async function loadBuildInfo() {
   // Try jspi first (Chrome path), fall back to asyncify (Safari/Firefox path).
@@ -991,25 +1001,31 @@ async function onDownloadClick() {
     if (state.aborted) break;
     const row = progressRowFor(v);
     row.setStatus('downloading', '');
+    const ac = new AbortController();
+    const unregister = registerAbort(() => ac.abort());
     try {
-      const { stream, contentLength } = await state.source.fetchModel(v.repo, v.filename);
+      const { stream, contentLength } = await state.source.fetchModel(v.repo, v.filename, ac.signal);
       const reader = stream.getReader();
       let read = 0;
       while (true) {
-        if (state.aborted) { try { reader.cancel(); } catch {} break; }
+        if (ac.signal.aborted) { try { reader.cancel(); } catch {} break; }
         const { done, value } = await reader.read();
         if (done) break;
         read += value.length;
         row.setProgress(contentLength ? read / contentLength : 0, read, contentLength);
       }
-      if (!state.aborted) {
+      if (!ac.signal.aborted) {
         state.cacheStatus[cacheKey(v)] = { cachedBytes: read };
         refreshCacheBadge(v);
         row.setStatus('cached', formatSize(read / (1024 * 1024)));
+      } else {
+        row.setStatus('aborted', '');
       }
     } catch (err) {
-      row.setStatus('error', err.message);
-      logLine(`Download failed: ${v.filename}: ${err.message}`);
+      if (ac.signal.aborted) { row.setStatus('aborted', ''); }
+      else { row.setStatus('error', err.message); logLine(`Download failed: ${v.filename}: ${err.message}`); }
+    } finally {
+      unregister();
     }
   }
 
@@ -1098,12 +1114,14 @@ async function onRunClick() {
     if (skipPrefetch) return;
     const row = progressRowFor(v);
     row.setStatus('prefetching', '');
+    const ac = new AbortController();
+    const unregister = registerAbort(() => ac.abort());
     try {
-      const { stream, contentLength } = await state.source.fetchModel(v.repo, v.filename);
+      const { stream, contentLength } = await state.source.fetchModel(v.repo, v.filename, ac.signal);
       const reader = stream.getReader();
       let read = 0;
       while (true) {
-        if (state.aborted) { try { reader.cancel(); } catch {} return; }
+        if (ac.signal.aborted) { try { reader.cancel(); } catch {} return; }
         const { done, value } = await reader.read();
         if (done) break;
         read += value.length;
@@ -1114,8 +1132,14 @@ async function onRunClick() {
       refreshCacheBadge(v);
       row.setStatus('cached', formatSize(read / (1024 * 1024)));
     } catch (err) {
+      if (ac.signal.aborted) {
+        row.setStatus('aborted', '');
+        return;
+      }
       row.setStatus('error', `prefetch: ${err.message}`);
       logLine(`Prefetch failed: ${v.filename}: ${err.message}`);
+    } finally {
+      unregister();
     }
   };
 
@@ -1224,16 +1248,16 @@ function runInWorker({
 
     state.currentWorker = worker;
     let settled = false;
+    let unregister = () => {};
     const finish = (record) => {
       if (settled) return;
       settled = true;
       try { worker.terminate(); } catch { /* noop */ }
       if (state.currentWorker === worker) state.currentWorker = null;
-      if (state.currentAbort === abortFn) state.currentAbort = null;
+      unregister();
       resolve(record);
     };
-    const abortFn = () => finish({ status: 'aborted', error: 'aborted by user' });
-    state.currentAbort = abortFn;
+    unregister = registerAbort(() => finish({ status: 'aborted', error: 'aborted by user' }));
 
     worker.onmessage = (e) => {
       const msg = e.data || {};
@@ -1383,11 +1407,14 @@ async function runBenchmarkInWorker(v, params, callbacks) {
 
   if (useOpfs) {
     let contentLength;
+    const ac = new AbortController();
+    const unregister = registerAbort(() => ac.abort());
     try {
       callbacks.onStatus?.('downloading', 'Downloading model to OPFS...');
       const r = await state.source.opfsHandleForModel(
         v.repo, v.filename,
         callbacks.onProgress,
+        ac.signal,
       );
       contentLength = r.size;
       // When the prefetch is skipped (mobile path), the inline download
@@ -1400,7 +1427,15 @@ async function runBenchmarkInWorker(v, params, callbacks) {
         refreshCacheBadge(v);
       }
     } catch (err) {
+      if (ac.signal.aborted) {
+        return { status: 'aborted', error: 'aborted by user' };
+      }
       return { status: 'error', error: `opfsHandleForModel failed: ${err.message}` };
+    } finally {
+      unregister();
+    }
+    if (state.aborted) {
+      return { status: 'aborted', error: 'aborted by user' };
     }
     // Pass the OPFS path components, not the FileHandle. iOS Safari
     // (and some older Chromium/Firefox versions) can't structured-clone
@@ -1417,10 +1452,18 @@ async function runBenchmarkInWorker(v, params, callbacks) {
   }
 
   let fetched;
+  const ac = new AbortController();
+  const unregister = registerAbort(() => ac.abort());
   try {
-    fetched = await state.source.fetchModel(v.repo, v.filename);
+    fetched = await state.source.fetchModel(v.repo, v.filename, ac.signal);
   } catch (err) {
+    unregister();
+    if (ac.signal.aborted) return { status: 'aborted', error: 'aborted by user' };
     return { status: 'error', error: `fetchModel failed: ${err.message}` };
+  }
+  unregister();
+  if (state.aborted) {
+    return { status: 'aborted', error: 'aborted by user' };
   }
 
   return runInWorker({
@@ -1790,15 +1833,18 @@ function wireAbortHandler() {
     state.aborted = true;
     const ab = $('btn-abort');
     if (ab) ab.disabled = true;
-    // currentAbort terminates the worker AND resolves runInWorker's Promise.
-    // worker.terminate() alone leaves the Promise pending forever (no
-    // onmessage/onerror fires after termination), which used to lock the UI.
-    if (state.currentAbort) {
-      state.currentAbort();
-      logLine('Abort requested — terminated in-flight worker.');
-    } else {
-      logLine('Abort requested — will stop between variants.');
+    // Iterate every registered op (worker terminate, fetch AbortController):
+    // worker.terminate() alone leaves the Promise pending forever, and
+    // fetch without a signal can hang on slow connections. Each fn is
+    // expected to also resolve / reject its own awaiting promise.
+    const n = state.abortHandlers.size;
+    for (const fn of state.abortHandlers) {
+      try { fn(); } catch { /* keep iterating */ }
     }
+    state.abortHandlers.clear();
+    logLine(n > 0
+      ? `Abort requested — cancelled ${n} in-flight op${n === 1 ? '' : 's'}.`
+      : 'Abort requested — will stop between variants.');
   });
 }
 

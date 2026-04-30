@@ -108,7 +108,7 @@ export function hostedSource() {
     // (fraction, downloaded, total). The returned `wasDownloaded` flag
     // distinguishes a fresh download from a cache hit so the caller can
     // decide whether to mark the variant for post-run eviction.
-    async opfsHandleForModel(repo, file, onProgress) {
+    async opfsHandleForModel(repo, file, onProgress, signal) {
       const cached = await getOpfsFileHandle(repo, file, { create: false }).catch(() => null);
       if (cached) {
         const f = await cached.getFile();
@@ -119,8 +119,10 @@ export function hostedSource() {
       }
 
       // Cache miss — download from HF straight into a writable OPFS stream.
+      // signal lets the caller cancel: fetch + reader.read both reject with
+      // AbortError when it fires, and the catch below propagates that up.
       const url = `https://huggingface.co/${repo}/resolve/main/${file}`;
-      const resp = await fetch(url);
+      const resp = await fetch(url, { signal });
       if (!resp.ok) {
         throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
       }
@@ -150,7 +152,7 @@ export function hostedSource() {
       }
     },
 
-    async fetchModel(repo, file) {
+    async fetchModel(repo, file, signal) {
       // Cache hit → stream the OPFS file straight out.
       try {
         const handle = await getOpfsFileHandle(repo, file, { create: false });
@@ -164,9 +166,10 @@ export function hostedSource() {
         }
       } catch { /* miss — fall through */ }
 
-      // Miss: fetch from HF, tee to OPFS + caller.
+      // Miss: fetch from HF, tee to OPFS + caller. signal lets the caller
+      // abort the network request; the tee'd reader inherits the abort.
       const url = `https://huggingface.co/${repo}/resolve/main/${file}`;
-      const resp = await fetch(url);
+      const resp = await fetch(url, { signal });
       if (!resp.ok) {
         throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
       }
