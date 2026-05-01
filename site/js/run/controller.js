@@ -42,6 +42,11 @@ const state = {
   nPrompt: DEFAULT_N_PROMPT,
   nGen: DEFAULT_N_GEN,
   nDepth: DEFAULT_N_DEPTH,
+  // True while a Run Study is in flight (or a restored study session).
+  // Drives the progress table layout: study mode renders pp/tg as
+  // d=0 / d=N column pairs so both passes' numbers stay visible
+  // instead of the d=N pass overwriting d=0.
+  studyMode: false,
   // User-controlled phase toggles. Defaults match the previous behaviour:
   // run consistency (CPU baseline + GPU forced-decode) AND run CPU perf
   // baseline. Both checkable to skip — useful on devices where CPU is too
@@ -852,18 +857,37 @@ function ensureProgressTable() {
   if (card) card.hidden = false;
   const header = card?.previousElementSibling;
   if (header?.classList?.contains('section-header')) header.hidden = false;
+  // Layout key — 'study' means pp/tg are split into d=0 and d=N columns,
+  // 'plain' means a single column each. If the existing table doesn't
+  // match the current state, drop it: state.results + the run loop are the
+  // source of truth, the progress table is just a visual scaffold.
+  const wantedLayout = state.studyMode ? 'study' : 'plain';
   let table = wrap.querySelector('table');
+  if (table && table.dataset.layout !== wantedLayout) {
+    table.remove();
+    table = null;
+  }
   if (!table) {
     table = document.createElement('table');
     table.className = 'results-table run-progress-table';
+    table.dataset.layout = wantedLayout;
+    const dN = state.nDepth || 0;
+    const ppHead = state.studyMode
+      ? `<th class="num" title="Prompt processing throughput at empty cache (avg \u00b1 stddev t/s)">pp tok/s @ d0</th>
+         <th class="num" title="Prompt processing throughput at depth ${dN} (avg \u00b1 stddev t/s)">pp tok/s @ d${dN}</th>`
+      : `<th class="num" title="Prompt processing throughput (avg \u00b1 stddev t/s)">pp tok/s</th>`;
+    const tgHead = state.studyMode
+      ? `<th class="num" title="Text generation throughput at empty cache (avg \u00b1 stddev t/s)">tg tok/s @ d0</th>
+         <th class="num" title="Text generation throughput at depth ${dN} (avg \u00b1 stddev t/s)">tg tok/s @ d${dN}</th>`
+      : `<th class="num" title="Text generation throughput (avg \u00b1 stddev t/s)">tg tok/s</th>`;
     table.innerHTML = `
       <thead>
         <tr>
           <th>Model</th>
           <th>Variant</th>
           <th>Status</th>
-          <th class="num" title="Prompt processing throughput (avg \u00b1 stddev t/s)">pp tok/s</th>
-          <th class="num" title="Text generation throughput (avg \u00b1 stddev t/s)">tg tok/s</th>
+          ${ppHead}
+          ${tgHead}
           <th class="num">Wall s</th>
           <th>Error</th>
         </tr>
@@ -884,12 +908,22 @@ function progressRowFor(v) {
     tr = document.createElement('tr');
     tr.dataset.key = key;
     tr.className = 'run-row-queued';
+    // pp/tg cells gain a depth-suffixed class in study mode so
+    // fillFromRecord can route each record to its own column. Plain mode
+    // still uses a single .prefill-dn / .decode-dn cell — pre-study (or
+    // single-pass) records all go there regardless of nDepth.
+    const ppCells = state.studyMode
+      ? '<td class="num prefill prefill-d0">—</td><td class="num prefill prefill-dn">—</td>'
+      : '<td class="num prefill prefill-dn">—</td>';
+    const tgCells = state.studyMode
+      ? '<td class="num decode decode-d0">—</td><td class="num decode decode-dn">—</td>'
+      : '<td class="num decode decode-dn">—</td>';
     tr.innerHTML = `
       <td>${escapeText(v.modelName)}</td>
       <td>${escapeText(v.quant)}</td>
       <td class="status">queued</td>
-      <td class="num prefill">—</td>
-      <td class="num decode">—</td>
+      ${ppCells}
+      ${tgCells}
       <td class="num wall">—</td>
       <td class="err"></td>
     `;
@@ -934,15 +968,35 @@ function progressRowFor(v) {
       const pp = tests.find(t => t.name?.startsWith('pp'));
       const tg = tests.find(t => t.name?.startsWith('tg'));
       const fmt = (t) => t ? `${t.avg_ts.toFixed(2)} \u00b1 ${t.stddev_ts.toFixed(2)}` : '\u2014';
-      const ppCell = tr.querySelector('.prefill');
-      ppCell.textContent = fmt(pp);
-      if (pp) ppCell.title = pp.name;
-      const tgCell = tr.querySelector('.decode');
-      tgCell.textContent = fmt(tg);
-      if (tg) tgCell.title = tg.name;
-      tr.querySelector('.wall').textContent = record.wallTimeMs
-        ? (record.wallTimeMs / 1000).toFixed(1)
-        : '\u2014';
+      // In study mode pick d=0 vs d=N based on the record's nDepth so the
+      // first pass doesn't get clobbered by the second. Plain mode only
+      // ever has the .prefill-dn / .decode-dn cells.
+      const isD0 = state.studyMode && (record.nDepth ?? 0) === 0;
+      const ppSel = isD0 ? '.prefill-d0' : '.prefill-dn';
+      const tgSel = isD0 ? '.decode-d0' : '.decode-dn';
+      const ppCell = tr.querySelector(ppSel);
+      const tgCell = tr.querySelector(tgSel);
+      if (ppCell) {
+        ppCell.textContent = fmt(pp);
+        if (pp) ppCell.title = pp.name;
+      }
+      if (tgCell) {
+        tgCell.textContent = fmt(tg);
+        if (tg) tgCell.title = tg.name;
+      }
+      // Wall cell accumulates across depth passes in study mode so the
+      // user sees total time per variant. Plain mode is a single-shot
+      // assignment as before.
+      const wallSec = record.wallTimeMs ? record.wallTimeMs / 1000 : 0;
+      const wallEl = tr.querySelector('.wall');
+      if (state.studyMode) {
+        const prev = parseFloat(wallEl.dataset.totalSec || '0') || 0;
+        const total = prev + wallSec;
+        wallEl.dataset.totalSec = String(total);
+        wallEl.textContent = total > 0 ? total.toFixed(1) : '\u2014';
+      } else {
+        wallEl.textContent = wallSec > 0 ? wallSec.toFixed(1) : '\u2014';
+      }
       tr.querySelector('.err').textContent = record.error || '';
     },
   };
@@ -1202,6 +1256,9 @@ async function onRunClick({ studyMode = false } = {}) {
   state.aborted = false;
   state.results = [];
   state.sessionDownloads = new Set();
+  // Drive progress-table layout: study mode splits pp/tg into d=0 / d=N
+  // columns so both depth passes' numbers stay visible.
+  state.studyMode = !!studyMode;
   updateButtons();
 
   if (isMobileDevice()) {
@@ -2074,6 +2131,16 @@ function restoreSavedResults() {
   if (!Array.isArray(saved) || saved.length === 0) return;
 
   state.results = saved;
+  // Detect study mode from the saved records: if any (model, variant) cell
+  // has both nDepth=0 and nDepth>0 entries, the OAuth-round-tripped run
+  // was a Run Study and should restore into the depth-split layout.
+  const depthsByCell = new Map();
+  for (const r of saved) {
+    const k = `${r.model}::${r.variant}`;
+    if (!depthsByCell.has(k)) depthsByCell.set(k, new Set());
+    depthsByCell.get(k).add(r.nDepth ?? 0);
+  }
+  state.studyMode = [...depthsByCell.values()].some(s => s.has(0) && [...s].some(d => d > 0));
   for (const record of saved) {
     const v = state.variants.find(x => x.repo === record.repo && x.filename === record.filename);
     if (!v) continue;
