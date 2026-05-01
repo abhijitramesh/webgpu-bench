@@ -12,6 +12,7 @@ import {
 import { isHubConfigured, HF_DATASET_REPO, CONSISTENCY_PROMPT } from './config.js';
 
 const RUN_INTENT_STORAGE_KEY = 'webgpu-bench:runIntent';
+const USER_REPORTED_STORAGE_KEY = 'webgpu-bench:userReported';
 const CRASH_STALE_MS = 10_000;
 
 const DEFAULT_N_PREDICT = 128;
@@ -62,7 +63,32 @@ const state = {
   // versions. JSPI and Asyncify variants are built from the same source
   // tree, so a single fetch is enough; both files would be identical.
   buildInfo: null,
+  // User-reported machine identity (Machine Name / GPU Name / Browser /
+  // OS). Filled by the "Your machine" form on the Run page, persisted to
+  // localStorage between visits, and stamped onto every result record so
+  // the leaderboard can attribute submissions even when UA / WebGPU
+  // adapter info is missing or wrong. machineName/browser/os are required
+  // before submission; gpuName is optional.
+  userReported: { machineName: '', gpuName: '', browser: '', os: '' },
 };
+
+const USER_REPORTED_REQUIRED = ['machineName', 'browser', 'os'];
+
+function loadUserReported() {
+  try {
+    const raw = localStorage.getItem(USER_REPORTED_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch { /* corrupt storage */ }
+  return null;
+}
+
+function saveUserReported() {
+  try {
+    localStorage.setItem(USER_REPORTED_STORAGE_KEY, JSON.stringify(state.userReported));
+  } catch { /* quota / disabled */ }
+}
 
 // Register an abort callback for an in-flight async op (worker terminate,
 // fetch signal abort, etc.). Returns an unregister fn the caller MUST
@@ -943,6 +969,91 @@ function slugify(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
 }
 
+// ──────────────── user-reported submission fields ────────────────
+
+// Best-effort default for the four user-reported inputs, derived from the
+// auto-detected device + browser data. The user is expected to edit these
+// before running — defaults exist only so the form isn't empty on first
+// visit. Returns { machineName, gpuName, browser, os }.
+function autoDetectedUserReported() {
+  const d = state.device || {};
+  const gpu = d.gpu || {};
+  const gpuStr = [gpu.vendor, gpu.architecture, gpu.device, gpu.description]
+    .filter(Boolean).join(' ').trim();
+  const memGB = state.budget?.memGB;
+  const browser = formatBrowser(d);
+  const os = formatPlatform(d);
+  // machineName default: "<gpu> · <memGB> GB" if both known, else either,
+  // else the OS string. The user is encouraged to replace with a friendly
+  // label like "MacBook Pro M3 16GB".
+  let machineName = '';
+  if (gpuStr && memGB) machineName = `${gpuStr} · ${memGB} GB`;
+  else if (gpuStr) machineName = gpuStr;
+  else if (memGB) machineName = `${memGB} GB device`;
+  else machineName = os;
+  return { machineName, gpuName: gpuStr, browser, os };
+}
+
+function readUserReportedFromInputs() {
+  return {
+    machineName: ($('ur-machine-name')?.value ?? '').trim(),
+    gpuName:     ($('ur-gpu-name')?.value     ?? '').trim(),
+    browser:     ($('ur-browser')?.value      ?? '').trim(),
+    os:          ($('ur-os')?.value           ?? '').trim(),
+  };
+}
+
+function refreshUserReportedValidation() {
+  const hint = $('ur-hint');
+  const missing = USER_REPORTED_REQUIRED.filter(k => !state.userReported[k]);
+  for (const k of USER_REPORTED_REQUIRED) {
+    const id = { machineName: 'ur-machine-name', browser: 'ur-browser', os: 'ur-os' }[k];
+    const el = $(id);
+    if (el) el.classList.toggle('is-missing', !state.userReported[k]);
+  }
+  if (hint) {
+    if (missing.length === 0) {
+      hint.textContent = 'Looks good — these labels will be attached to every result you submit.';
+      hint.classList.remove('is-warn');
+    } else {
+      hint.textContent = `Required: ${missing.join(', ')}. We'll still let you run, but submissions need these filled in.`;
+      hint.classList.add('is-warn');
+    }
+  }
+}
+
+function wireUserReported() {
+  // Pre-fill: stored values win, fall back to auto-detected defaults so
+  // first-time users see something rather than an empty form.
+  const stored = loadUserReported();
+  const auto = autoDetectedUserReported();
+  state.userReported = {
+    machineName: stored?.machineName?.trim() || auto.machineName,
+    gpuName:     stored?.gpuName?.trim()     || auto.gpuName,
+    browser:     stored?.browser?.trim()     || auto.browser,
+    os:          stored?.os?.trim()          || auto.os,
+  };
+  for (const [id, key] of [
+    ['ur-machine-name', 'machineName'],
+    ['ur-gpu-name',     'gpuName'],
+    ['ur-browser',      'browser'],
+    ['ur-os',           'os'],
+  ]) {
+    const el = $(id);
+    if (!el) continue;
+    el.value = state.userReported[key] || '';
+    el.addEventListener('input', () => {
+      state.userReported = readUserReportedFromInputs();
+      saveUserReported();
+      refreshUserReportedValidation();
+    });
+  }
+  // Persist whatever the auto-detect filled in so the user doesn't lose
+  // it on reload before they touch anything.
+  saveUserReported();
+  refreshUserReportedValidation();
+}
+
 async function machineInfo() {
   const ua = navigator.userAgent;
   const platform = /Mac/.test(ua) ? 'darwin'
@@ -1511,6 +1622,10 @@ function makeRecord(v, vr, machine, browser, wallTimeMs) {
     cpu_baseline: cpuBaseline,
     output: gpu?.output || '',
     machine,
+    // User-typed labels that override (or supplement) the auto-detected
+    // machine/browser fields. Auto-detection is unreliable across UA-string
+    // anonymization, deviceMemory rounding, and missing WebGPU adapter info.
+    userReported: { ...state.userReported },
     source: `webgpu-bench/site (${state.surface})`,
   };
 }
@@ -1754,6 +1869,17 @@ function wireHubHandlers() {
       if (!state.hfSession) return;
       const eligible = submittableResults();
       if (eligible.length === 0) return;
+      // Required user-reported fields gate the submission so the leaderboard
+      // doesn't accumulate anonymous rows. The Run buttons stay enabled
+      // even when these are blank — we only block at submit time.
+      const missing = USER_REPORTED_REQUIRED.filter(k => !state.userReported[k]);
+      if (missing.length > 0) {
+        const card = $('user-reported-card');
+        if (card) { card.open = true; card.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+        refreshUserReportedValidation();
+        logLine(`Submit blocked: fill in ${missing.join(', ')} in "Your machine".`);
+        return;
+      }
       submitBtn.disabled = true;
       const original = submitBtn.textContent;
       submitBtn.textContent = 'Submitting…';
@@ -1845,6 +1971,7 @@ export async function mountRunSection() {
   wirePurgeHandler();
   wireHubHandlers();
   wireOutputHandlers();
+  wireUserReported();
   // Restore the last completed run from localStorage so it survives a page
   // reload — including the OAuth redirect taking the user to HF and back.
   // Must run before updateButtons/renderOutput/hideProgress so they pick up

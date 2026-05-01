@@ -166,6 +166,37 @@
           </div>
         </div>
 
+        <!-- User-reported machine identity. The auto-detected values in the
+             cards above are unreliable (UA strings lie, deviceMemory is
+             coarse, GPU adapter info is often empty). We ship these
+             user-typed fields alongside the auto-detected ones so the
+             leaderboard can attribute submissions correctly. Persisted to
+             localStorage between visits. -->
+        <details class="card run-machine-card" id="user-reported-card" open>
+          <summary>
+            <strong>Your machine</strong> — labels the auto-detected device data on submission. Saved between visits.
+          </summary>
+          <div class="run-machine-grid">
+            <label class="run-machine-field">
+              <span class="run-machine-label">Machine name <span class="run-machine-req" aria-hidden="true">*</span></span>
+              <input type="text" id="ur-machine-name" class="run-machine-input" placeholder="e.g. MacBook Pro M3 16GB" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="run-machine-field">
+              <span class="run-machine-label">GPU name <span class="run-machine-opt">(optional)</span></span>
+              <input type="text" id="ur-gpu-name" class="run-machine-input" placeholder="e.g. Apple M3 Pro" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="run-machine-field">
+              <span class="run-machine-label">Browser <span class="run-machine-req" aria-hidden="true">*</span></span>
+              <input type="text" id="ur-browser" class="run-machine-input" placeholder="e.g. Chrome 138 dev" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="run-machine-field">
+              <span class="run-machine-label">Operating system <span class="run-machine-req" aria-hidden="true">*</span></span>
+              <input type="text" id="ur-os" class="run-machine-input" placeholder="e.g. macOS 15.4" autocomplete="off" spellcheck="false">
+            </label>
+          </div>
+          <p class="run-machine-hint" id="ur-hint">Required fields marked <span class="run-machine-req">*</span>. Defaults are filled in from your browser; edit anything that's wrong before running.</p>
+        </details>
+
         <!-- Hide filters, iterations, actions -->
         <div class="filter-bar run-controls">
           <div class="filter-bar-inner run-filters">

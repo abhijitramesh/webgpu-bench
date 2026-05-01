@@ -1723,6 +1723,50 @@ a:hover { color: var(--info); }
 .run-device-row-value { color: var(--foreground); font-weight: 600; }
 .run-device-note { font-size: 11px; color: var(--foreground-muted); margin-top: 2px; }
 
+/* User-reported machine card — appears between the auto-detected device
+   stats and the filter bar. <details>/<summary> so it can collapse once
+   the user has filled it in. */
+.run-machine-card { margin-bottom: 24px; }
+.run-machine-card > summary { cursor: pointer; }
+.run-machine-card > summary > strong { font-weight: 600; }
+.run-machine-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.run-machine-field { display: flex; flex-direction: column; gap: 6px; }
+.run-machine-label {
+  font-size: 12px;
+  color: var(--foreground-muted);
+  font-weight: 500;
+}
+.run-machine-req { color: var(--danger, #d04545); font-weight: 700; }
+.run-machine-opt { color: var(--foreground-muted); font-weight: 400; }
+.run-machine-input {
+  height: 34px;
+  padding: 0 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.run-machine-input:focus {
+  outline: none;
+  border-color: var(--brand, #2b6df0);
+}
+.run-machine-input.is-missing {
+  border-color: var(--danger, #d04545);
+}
+.run-machine-hint {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--foreground-muted);
+}
+.run-machine-hint.is-warn { color: var(--danger, #d04545); }
+
 /* Hide filters + iterations + action buttons — stacks with .filter-bar tokens. */
 .run-filters { align-items: center; }
 .run-filters-checks {
