@@ -4,6 +4,7 @@
 
 import { runBenchmarkCore } from './js/run/core.js';
 import { localSource } from './js/run/source.js';
+import { CONSISTENCY_PROMPT } from './js/run/config.js';
 
 // Global error handlers — catch Emscripten abort() which may not throw.
 window.addEventListener('error', (e) => {
@@ -23,7 +24,7 @@ window.addEventListener('unhandledrejection', (e) => {
   const params = new URLSearchParams(window.location.search);
   const modelFile           = params.get('model')         || '';
   const hfRepo              = params.get('hfRepo')        || 'unsloth/Llama-3.2-1B-Instruct-GGUF';
-  const consistencyPrompt   = params.get('prompt')        || 'Hello, how are you?';
+  const consistencyPrompt   = CONSISTENCY_PROMPT;
   const consistencyNPredict = parseInt(params.get('nPredict')   || '128', 10);
   const nPrompt             = parseInt(params.get('nPrompt')    || '512', 10);
   const nGen                = parseInt(params.get('nGen')       || '128', 10);

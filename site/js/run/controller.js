@@ -9,14 +9,11 @@ import {
   resumeHFSession, beginHFSignIn, signOutHF, submitResultsToDataset,
   HF_OAUTH_PENDING_KEY,
 } from './hub.js';
-import { isHubConfigured, HF_DATASET_REPO } from './config.js';
+import { isHubConfigured, HF_DATASET_REPO, CONSISTENCY_PROMPT } from './config.js';
 
 const RUN_INTENT_STORAGE_KEY = 'webgpu-bench:runIntent';
 const CRASH_STALE_MS = 10_000;
 
-const DEFAULT_PROMPT =
-  'Explain quantum computing to a software engineer in four concise paragraphs. ' +
-  'Cover superposition, entanglement, quantum gates, and one practical use case.';
 const DEFAULT_N_PREDICT = 128;
 const DEFAULT_N_CTX = 2048;
 const DEFAULT_N_GPU_LAYERS = 999;
@@ -1506,7 +1503,7 @@ async function runVariantWithIterations(v, row) {
     row.setStatus('cpu-baseline', phaseLabel);
     try {
       cpuResult = await runBenchmarkInWorker(v, {
-        consistencyPrompt: runConsistency ? DEFAULT_PROMPT : '',
+        consistencyPrompt: runConsistency ? CONSISTENCY_PROMPT : '',
         consistencyNPredict: DEFAULT_N_PREDICT,
         refTokenIds: null,
         nPrompt: runCpuPerf ? nPrompt : 0,
@@ -1551,7 +1548,7 @@ async function runVariantWithIterations(v, row) {
   let gpuResult;
   try {
     gpuResult = await runBenchmarkInWorker(v, {
-      consistencyPrompt: runConsistency ? DEFAULT_PROMPT : '',
+      consistencyPrompt: runConsistency ? CONSISTENCY_PROMPT : '',
       consistencyNPredict: DEFAULT_N_PREDICT,
       refTokenIds: refTokenIds || null,
       nPrompt,

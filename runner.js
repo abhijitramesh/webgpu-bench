@@ -85,7 +85,6 @@ function buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds = null, mod
   const harnessUrl = new URL('/harness.html', serverUrl);
   harnessUrl.searchParams.set('model', variant.filename);
   harnessUrl.searchParams.set('hfRepo', variant.repo);
-  harnessUrl.searchParams.set('prompt', config.PROMPT);
   harnessUrl.searchParams.set('nPredict', String(config.N_PREDICT));
   harnessUrl.searchParams.set('nPrompt', String(config.N_PROMPT));
   harnessUrl.searchParams.set('nGen',    String(config.N_GEN));

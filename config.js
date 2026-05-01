@@ -122,8 +122,8 @@ export function getConfig() {
     // Model config (repo is now per-variant from models.json)
     MODEL_VARIANTS: variants,
 
-    // Consistency phase (real prompt → forced-decoding vs CPU baseline)
-    PROMPT: '<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\nExplain quantum computing in simple terms.<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n',
+    // Consistency-phase prompt is owned by site/js/run/config.js so the
+    // interactive Run page and harness.js share a single value.
     N_PREDICT: 128,
     // Perf phase (synthetic-token llama-bench-style pp / tg)
     N_PROMPT: args.nPrompt ?? 512,
