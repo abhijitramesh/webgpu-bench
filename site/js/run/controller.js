@@ -1622,6 +1622,11 @@ function makeRecord(v, vr, machine, browser, wallTimeMs) {
     cpu_baseline: cpuBaseline,
     output: gpu?.output || '',
     machine,
+    // Memory snapshot llama.cpp captured immediately after bench_load —
+    // model_size, state_size, and per-device {free,total} from every ggml
+    // backend. Useful for spotting memory-pressured runs and for sanity-
+    // checking GPU memory headroom across machines.
+    memoryInfo: gpu?.memoryInfo ?? null,
     // User-typed labels that override (or supplement) the auto-detected
     // machine/browser fields. Auto-detection is unreliable across UA-string
     // anonymization, deviceMemory rounding, and missing WebGPU adapter info.

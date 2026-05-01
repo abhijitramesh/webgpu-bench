@@ -340,6 +340,22 @@ async function runOne({ params, opfsPath }) {
   if (loadResult !== 0) throw new Error(`bench_load failed: ${loadResult}`);
   log('Model loaded');
 
+  // ─── Memory snapshot from llama.cpp ───
+  // Captured immediately after bench_load so model_size reflects the loaded
+  // model and per-device free counters reflect post-allocation state. Wrapped
+  // in try/catch — if the C side or a backend errors, the run can still
+  // produce perf numbers, just without memoryInfo on the record.
+  try {
+    const raw = await Module.ccall('bench_memory_info', 'string', [], [], { async: true });
+    result.memoryInfo = parseBenchResult('bench_memory_info', raw);
+    const dev = (result.memoryInfo.devices || [])
+      .map(d => `${d.name}(${d.type}) free=${(d.free / (1024 * 1024)).toFixed(0)}MB total=${(d.total / (1024 * 1024)).toFixed(0)}MB`)
+      .join(' | ') || 'none';
+    log(`Memory: model=${(result.memoryInfo.model_size / (1024 * 1024)).toFixed(0)}MB state=${(result.memoryInfo.state_size / (1024 * 1024)).toFixed(0)}MB | ${dev}`);
+  } catch (err) {
+    log(`bench_memory_info failed: ${err.message} — continuing without memoryInfo`);
+  }
+
   // ─── Consistency phase ───
   // Soft-fail: a failure here logs and falls through to the perf phase
   // rather than aborting the whole run. Some devices/models can't survive

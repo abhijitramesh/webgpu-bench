@@ -286,6 +286,7 @@ function makeResult(timestamp, browserName, variant, bench, nGpuLayers, wallTime
     output: (bench.output || '').substring(0, 200),
     machine: config.MACHINE,
     consistency: bench.consistency ?? null,
+    memoryInfo: bench.memoryInfo ?? null,
     llamaCppCommit: LLAMA_CPP_COMMIT,
   };
 }

@@ -418,6 +418,52 @@ const char * bench_tg(int n_gen) {
     return g_result_buf;
 }
 
+// Memory snapshot from llama.cpp's perspective: loaded model size, current
+// state-buffer size, and per-device free/total from every registered ggml
+// backend. Intended to be called after bench_load so model_size reflects the
+// loaded model and the per-device free counters reflect what's left after
+// allocation. Safe to call before bench_load too (model_size + state_size
+// will be 0). Returns the same g_result_buf — caller must consume before the
+// next bench_* call overwrites it.
+const char* bench_memory_info() {
+    const uint64_t model_size = g_model ? llama_model_size(g_model) : 0;
+    const size_t   state_size = g_ctx   ? llama_state_get_size(g_ctx) : 0;
+
+    std::string devices_json = "[";
+    const size_t n_dev = ggml_backend_dev_count();
+    for (size_t i = 0; i < n_dev; i++) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        const char* name = ggml_backend_dev_name(dev);
+        // The function name `ggml_backend_dev_type` shadows the enum tag, so
+        // we have to spell it `enum ggml_backend_dev_type` to refer to the type.
+        const enum ggml_backend_dev_type t = ggml_backend_dev_type(dev);
+        const char* type_str = (t == GGML_BACKEND_DEVICE_TYPE_GPU)   ? "GPU"
+                             : (t == GGML_BACKEND_DEVICE_TYPE_ACCEL) ? "ACCEL"
+                             : "CPU";
+        size_t free_mem = 0, total_mem = 0;
+        ggml_backend_dev_memory(dev, &free_mem, &total_mem);
+        if (i > 0) devices_json += ",";
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+            "{\"name\":\"%s\",\"type\":\"%s\",\"free\":%zu,\"total\":%zu}",
+            name ? name : "", type_str, free_mem, total_mem);
+        devices_json += buf;
+    }
+    devices_json += "]";
+
+    snprintf(g_result_buf, sizeof(g_result_buf),
+        "{"
+        "\"model_size\":%llu,"
+        "\"state_size\":%zu,"
+        "\"devices\":%s"
+        "}",
+        (unsigned long long)model_size,
+        state_size,
+        devices_json.c_str()
+    );
+    return g_result_buf;
+}
+
 void bench_exit() {
     if (g_sampler) { llama_sampler_free(g_sampler); g_sampler = nullptr; }
     if (g_ctx)     { llama_free(g_ctx);             g_ctx = nullptr; }
