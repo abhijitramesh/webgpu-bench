@@ -67,6 +67,18 @@ export function renderResultsTable(results) {
 
   const sorted = sortState.key ? sortResults(results, sortState.key, sortState.dir) : results;
 
+  // Resolve the depth-loaded column label from the data: when every visible
+  // row shares one N (the typical leaderboard case), show that concrete
+  // value (e.g., "@ d2048"). When rows mix depths (someone experimenting
+  // with d=4096 vs d=2048), fall back to the abstract "@ dN" with a tooltip
+  // listing the values present so the user knows the column is mixed.
+  const depthNValues = [...new Set(results.map(r => r.n_depth_dN).filter(v => v != null))]
+    .sort((a, b) => a - b);
+  const dnLabel = depthNValues.length === 1 ? `d${depthNValues[0]}` : 'dN';
+  const dnHeaderTitle = depthNValues.length > 1
+    ? `Mixed depths in view: ${depthNValues.map(v => `d${v}`).join(', ')}`
+    : '';
+
   /* priority: 1 = always show; 2 = hide below 640px; 3 = hide below 900px */
   const cols = [
     { key: 'machineSlug', label: 'Machine', priority: 1 },
@@ -83,9 +95,9 @@ export function renderResultsTable(results) {
     // overwriting one with the other. Pre-study and plain-Run records
     // populate only the side they actually measured; the other reads `—`.
     { key: 'decode_tok_s_d0', label: 'tg @ d0', priority: 1 },
-    { key: 'decode_tok_s_dN', label: 'tg @ dN', priority: 1 },
+    { key: 'decode_tok_s_dN', label: `tg @ ${dnLabel}`, priority: 1, headerTitle: dnHeaderTitle },
     { key: 'prefill_tok_s_d0', label: 'pp @ d0', priority: 3 },
-    { key: 'prefill_tok_s_dN', label: 'pp @ dN', priority: 3 },
+    { key: 'prefill_tok_s_dN', label: `pp @ ${dnLabel}`, priority: 3, headerTitle: dnHeaderTitle },
     { key: 'cpu_baseline_decode_tok_s', label: 'CPU tg tok/s', priority: 2 },
     { key: 'cpu_baseline_prefill_tok_s', label: 'CPU pp tok/s', priority: 3 },
     { key: 'n_eval', label: 'n_eval', priority: 3 },
@@ -106,7 +118,8 @@ export function renderResultsTable(results) {
     const pin = i === 0 ? ' col-pin col-pin-1' : (i === 1 ? ' col-pin col-pin-2' : '');
     const prio = col.priority >= 3 ? ' col-p3' : (col.priority === 2 ? ' col-p2' : '');
     const cls = `sortable${isActive ? ' sorted' : ''}${pin}${prio}`;
-    html += `<th data-key="${col.key}" class="${cls}" aria-sort="${ariaSort}" scope="col" tabindex="0"><span class="th-label">${col.label}</span><span class="th-sort-indicator" aria-hidden="true">${arrowChar}</span></th>`;
+    const titleAttr = col.headerTitle ? ` title="${escapeHtml(col.headerTitle)}"` : '';
+    html += `<th data-key="${col.key}" class="${cls}" aria-sort="${ariaSort}" scope="col" tabindex="0"${titleAttr}><span class="th-label">${col.label}</span><span class="th-sort-indicator" aria-hidden="true">${arrowChar}</span></th>`;
   });
   html += '</tr></thead><tbody>';
 
