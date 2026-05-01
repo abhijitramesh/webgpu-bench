@@ -1187,10 +1187,13 @@ async function onRunStudyClick() {
     return;
   }
   logLine(`Run study: selected ${checked.length} variants — starting run.`);
-  await onRunClick();
+  // studyMode flips on the depth-pairing branch in runVariantWithIterations
+  // so each variant produces both d=0 and d=N_DEPTH records (matches the
+  // CLI runner's --study behavior).
+  await onRunClick({ studyMode: true });
 }
 
-async function onRunClick() {
+async function onRunClick({ studyMode = false } = {}) {
   // Run accepts any checked variant — uncached ones download just-in-time.
   const variants = getCheckedVariants();
   if (variants.length === 0) return;
@@ -1277,30 +1280,51 @@ async function onRunClick() {
     writeRunIntent(v);
 
     row.setStatus('running', '');
-    const start = performance.now();
-    const variantResult = await runVariantWithIterations(v, row);
-    const wallTimeMs = performance.now() - start;
 
-    const record = makeRecord(v, variantResult, machine, browser, wallTimeMs);
-    state.results.push(record);
-    row.fillFromRecord(record);
+    // Depth schedule for this variant. Study mode pairs d=0 with the
+    // configured d=N so the dashboard can compare cold-cache against
+    // depth-loaded numbers; non-study runs do a single pass at the user's
+    // configured depth (default 2048). Mirrors the runner.js depth loop.
+    const baseDepth = Math.max(0, state.nDepth ?? DEFAULT_N_DEPTH);
+    const depthsToRun = (studyMode && baseDepth > 0) ? [0, baseDepth] : [baseDepth];
+
+    let sharedCpu = null;
+    for (const nDepth of depthsToRun) {
+      if (state.aborted) break;
+      const start = performance.now();
+      const variantResult = await runVariantWithIterations(v, row, {
+        nDepth,
+        cpuResult: sharedCpu,
+      });
+      const wallTimeMs = performance.now() - start;
+
+      const record = makeRecord(v, variantResult, machine, browser, wallTimeMs);
+      state.results.push(record);
+      row.fillFromRecord(record);
+
+      // Cache the CPU pass from the first depth so subsequent depth runs
+      // skip it (CPU baseline is depth-independent).
+      if (!sharedCpu && variantResult.cpu?.status === 'done') {
+        sharedCpu = variantResult.cpu;
+      }
+
+      try {
+        // sessionStorage so results survive in-tab navigations (the OAuth
+        // sign-in redirect in particular) but reset when the user actually
+        // closes the tab — they don't want stale results on a fresh visit.
+        sessionStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify(state.results));
+      } catch { /* quota */ }
+
+      if (state.surface === 'localhost' && $('save-local')?.checked) {
+        fetch('/api/results', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(record),
+        }).catch(err => logLine(`POST /api/results failed: ${err.message}`));
+      }
+    }
 
     clearRunIntent();
-
-    try {
-      // sessionStorage so results survive in-tab navigations (the OAuth
-      // sign-in redirect in particular) but reset when the user actually
-      // closes the tab — they don't want stale results on a fresh visit.
-      sessionStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify(state.results));
-    } catch { /* quota */ }
-
-    if (state.surface === 'localhost' && $('save-local')?.checked) {
-      fetch('/api/results', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(record),
-      }).catch(err => logLine(`POST /api/results failed: ${err.message}`));
-    }
 
     // Evict if enabled and this variant was downloaded this session. Files
     // the user had cached before the run are always preserved.
@@ -1461,11 +1485,18 @@ async function runBenchmarkInWorker(v, params, callbacks) {
 // does both consistency forced-decoding and the llama-bench-style perf
 // sweep — pp + tg with warmup + nReps timed reps each).
 // Returns an aggregate that makeRecord consumes.
-async function runVariantWithIterations(v, row) {
+//
+// `opts.nDepth` overrides state.nDepth so the caller can sweep multiple
+// depths per variant (study mode pairs d=0 with d=N).
+// `opts.cpuResult` when provided short-circuits the CPU baseline phase —
+// study mode runs CPU once on the d=0 pass and reuses it for d=N, since
+// reference tokens and the 1-rep CPU comparator are depth-independent.
+async function runVariantWithIterations(v, row, opts = {}) {
   const nReps = Math.max(1, state.iterations || DEFAULT_ITERATIONS);
   const nPrompt = Math.max(0, state.nPrompt ?? DEFAULT_N_PROMPT);
   const nGen = Math.max(0, state.nGen ?? DEFAULT_N_GEN);
-  const nDepth = Math.max(0, state.nDepth ?? DEFAULT_N_DEPTH);
+  const nDepth = Math.max(0, opts.nDepth ?? state.nDepth ?? DEFAULT_N_DEPTH);
+  const reuseCpu = opts.cpuResult || null;
   // Per-test n_ctx mirrors llama-bench (line 1211 of
   // tools/llama-bench/llama-bench.cpp): sized to fit prompt+gen+depth so a
   // raised depth doesn't silently overflow the cache.
@@ -1480,12 +1511,15 @@ async function runVariantWithIterations(v, row) {
   const needCpuPass = runConsistency || runCpuPerf;
 
   // ─── CPU baseline ───
-  // Skipped entirely if both toggles disable it. Otherwise the pass mixes
-  // and matches: consistency_run captures token_ids; perf phase runs at
-  // nReps=1 (single warmup+timed rep — enough to populate the dashboard's
-  // CPU/GPU comparison without doubling CPU runtime).
+  // Skipped entirely if both toggles disable it OR caller provided a cached
+  // result from an earlier depth pass. Otherwise the pass mixes and matches:
+  // consistency_run captures token_ids; perf phase runs at nReps=1 (single
+  // warmup+timed rep — enough to populate the dashboard's CPU/GPU comparison
+  // without doubling CPU runtime).
   let cpuResult;
-  if (needCpuPass) {
+  if (reuseCpu) {
+    cpuResult = reuseCpu;
+  } else if (needCpuPass) {
     const phaseLabel = runConsistency && runCpuPerf ? 'reference tokens + 1-rep perf'
       : runConsistency ? 'reference tokens'
       : '1-rep perf';
