@@ -1,4 +1,4 @@
-import { loadData, filterResults, selectBestResults, expandCpuRows, attachCpuBaselineFromCpuRecords } from './data.js';
+import { loadData, filterResults, selectBestResults, expandCpuRows, attachCpuBaselineFromCpuRecords, mergeDepthPairs } from './data.js';
 import { initFilters, populateQuantOptions, getFilters, resetFilters } from './filters.js';
 import { renderDecodeChart, renderPrefillChart, renderSizeChart, renderMachineChart, renderCpuGpuChart, renderSpeedupChart } from './charts.js';
 import { renderResultsTable, renderErrorTable, renderMachineInfo, renderCpuGpuTable } from './tables.js';
@@ -78,11 +78,14 @@ function render() {
   const filters = getFilters();
   // Filter, attach CPU baseline values (folds CLI-flow CPU records onto
   // their GPU sibling so both submission paths produce one row per cell),
-  // collapse to one canonical row per (machine, browser, model, variant,
-  // backend), then drop the now-redundant CPU rows. The CPU numbers stay
-  // visible via the cpu_baseline_* columns on each GPU row.
+  // fold the (d=0, d=N) study pair into a single GPU row carrying both
+  // depths, collapse to one canonical row per (machine, browser, model,
+  // variant, backend), then drop the now-redundant CPU rows. CPU numbers
+  // stay visible via the cpu_baseline_* columns on each GPU row.
   const filtered = selectBestResults(
-    attachCpuBaselineFromCpuRecords(filterResults(appData.results, filters)),
+    mergeDepthPairs(
+      attachCpuBaselineFromCpuRecords(filterResults(appData.results, filters)),
+    ),
   ).filter(r => r.nGpuLayers !== 0);
 
   // Summary cards — counts tween from previous value to new on filter changes
@@ -203,8 +206,9 @@ function renderHeroMeta(data) {
 
   // Hero stat: top decode tok/s with machine + model context. Uses the
   // canonical set (best per cell) so a noisy 1-iteration outlier can't
-  // hijack the headline number.
-  const canonical = selectBestResults(data?.results || []);
+  // hijack the headline number. Depth-merge first so a Study cell counts
+  // once at its d=N number, not twice.
+  const canonical = selectBestResults(mergeDepthPairs(data?.results || []));
   const passed = canonical.filter(r => r.status === 'done' && r.decode_tok_s != null);
   const heroStatEl = document.getElementById('hero-stat');
   const heroNumEl = document.getElementById('hero-top-decode');

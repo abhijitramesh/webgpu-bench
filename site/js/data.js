@@ -128,6 +128,82 @@ function writeSessionCache(data) {
   } catch { /* quota or disabled */ }
 }
 
+/* Fold the (d=0, d=N) GPU record pair that Run Study emits per variant
+   into a single dashboard row. The d=N record stays canonical
+   (`decode_tok_s` / `prefill_tok_s` keep the depth-loaded numbers) so
+   existing chart/table consumers keep working unchanged; a new pair of
+   `_d0` / `_dN` suffix fields lets depth-aware code pick a specific pass.
+
+   CPU records are pinned to d=0 by the runner, so they pass through
+   untouched. Cells with only one half of the pair (plain Run, pre-study
+   data, or a partial study) lift their values into the suffix field on
+   the side that exists, leaving the other side null — so consumers can
+   render `—` without having to know the record's history.
+
+   Within each cell we also tie-break duplicate records per depth bucket
+   (same iteration / latest timestamp wins, mirroring selectBestResults)
+   so multiple study runs of the same variant collapse cleanly.
+
+   Run AFTER attachCpuBaselineFromCpuRecords (which keys on the
+   depth-independent (machine, browser, model, variant) tuple) and
+   BEFORE selectBestResults (CPU rows still need cell-dedup; GPU rows
+   are already deduped here). */
+export function mergeDepthPairs(records) {
+  const cells = new Map();
+  const cpuRows = [];
+  for (const r of records) {
+    if (r.nGpuLayers === 0) {
+      cpuRows.push(r);
+      continue;
+    }
+    const cellKey = `${r.machineSlug}|${r.browser}|${r.model}|${r.variant}`;
+    const bucket = (r.n_depth ?? 0) === 0 ? 'd0' : 'dN';
+    const slot = cells.get(cellKey) || { d0: null, dN: null };
+    if (!slot[bucket] || isStrongerRecord(r, slot[bucket])) slot[bucket] = r;
+    cells.set(cellKey, slot);
+  }
+  const merged = [...cpuRows];
+  for (const { d0, dN } of cells.values()) {
+    if (d0 && dN) merged.push(joinDepthPair(d0, dN));
+    else if (dN) merged.push(liftSingleDepth(dN, 'dN'));
+    else if (d0) merged.push(liftSingleDepth(d0, 'd0'));
+  }
+  return merged;
+}
+
+function isStrongerRecord(a, b) {
+  const ai = a.iterations ?? 0;
+  const bi = b.iterations ?? 0;
+  if (ai !== bi) return ai > bi;
+  return (a.timestamp || '') > (b.timestamp || '');
+}
+
+const DEPTH_PERF_FIELDS = [
+  'decode_tok_s', 'prefill_tok_s',
+  'decode_stddev_ts', 'prefill_stddev_ts',
+  'pp_test_name', 'tg_test_name',
+];
+
+function joinDepthPair(d0, dN) {
+  const out = { ...dN };
+  for (const f of DEPTH_PERF_FIELDS) {
+    out[`${f}_d0`] = d0[f] ?? null;
+    out[`${f}_dN`] = dN[f] ?? null;
+  }
+  out.n_depth_dN = dN.n_depth ?? null;
+  return out;
+}
+
+function liftSingleDepth(r, bucket) {
+  const out = { ...r };
+  for (const f of DEPTH_PERF_FIELDS) {
+    out[`${f}_d0`] = bucket === 'd0' ? (r[f] ?? null) : null;
+    out[`${f}_dN`] = bucket === 'dN' ? (r[f] ?? null) : null;
+  }
+  out.n_depth_dN = bucket === 'dN' ? (r.n_depth ?? null) : null;
+  return out;
+}
+
 /* Reduce a flat result set down to one canonical row per
    (machineSlug, browser, model, variant, backend) cell. Picks the row with
    the most iterations; ties break on latest timestamp. This is the

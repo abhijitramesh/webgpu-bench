@@ -250,16 +250,23 @@ function avgBy(items, field) {
   return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
 }
 
+// CPU is pinned to d=0 by the runner, so apples-to-apples means reading
+// GPU's d=0 number. The CPU side keeps its bare metric (CPU records are
+// depth-pinned to 0 either way); GPU reads `<metric>_d0`. Plain-Run
+// records that only measured d=N have null `_d0` and silently drop out.
+function gpuDepthField(metric) { return `${metric}_d0`; }
+
 export function renderCpuGpuChart(results, metric = 'decode_tok_s') {
   const canvasId = 'chart-cpu-gpu';
   destroyChart(canvasId);
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
 
+  const gpuMetric = gpuDepthField(metric);
   const passed = results.filter(r => r.status === 'done');
   // expandCpuRows folds in cpu_baseline_* from browser-flow GPU records.
   const cpuResults = expandCpuRows(passed).filter(r => r[metric] != null);
-  const gpuResults = passed.filter(r => r.nGpuLayers !== 0 && r[metric] != null);
+  const gpuResults = passed.filter(r => r.nGpuLayers !== 0 && r[gpuMetric] != null);
 
   if (cpuResults.length === 0 || gpuResults.length === 0) {
     showEmptyState(canvas, cpuResults.length === 0 ? 'No CPU baseline data in current filter' : 'No GPU data in current filter');
@@ -286,7 +293,7 @@ export function renderCpuGpuChart(results, metric = 'decode_tok_s') {
     return {
       label: browser,
       backgroundColor: BROWSER_COLORS[browser] || '#888',
-      data: allQuants.map(q => avgBy(byVariant[q] || [], metric)),
+      data: allQuants.map(q => avgBy(byVariant[q] || [], gpuMetric)),
     };
   });
 
@@ -298,7 +305,7 @@ export function renderCpuGpuChart(results, metric = 'decode_tok_s') {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        title: titleConfig(`CPU vs WebGPU: ${metricLabel}`),
+        title: titleConfig(`CPU vs WebGPU: ${metricLabel} @ d0`),
         legend: darkLegend(),
         tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${formatTokS(ctx.raw)} tok/s` } },
       },
@@ -313,9 +320,10 @@ export function renderSpeedupChart(results, metric = 'decode_tok_s') {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
 
+  const gpuMetric = gpuDepthField(metric);
   const passed = results.filter(r => r.status === 'done');
   const cpuResults = expandCpuRows(passed).filter(r => r[metric] != null);
-  const gpuResults = passed.filter(r => r.nGpuLayers !== 0 && r[metric] != null);
+  const gpuResults = passed.filter(r => r.nGpuLayers !== 0 && r[gpuMetric] != null);
 
   if (cpuResults.length === 0 || gpuResults.length === 0) {
     showEmptyState(canvas, cpuResults.length === 0 ? 'No CPU baseline data in current filter' : 'No GPU data in current filter');
@@ -345,7 +353,7 @@ export function renderSpeedupChart(results, metric = 'decode_tok_s') {
       backgroundColor: BROWSER_COLORS[browser] || '#888',
       data: allQuants.map(q => {
         const cpuAvg = cpuAvgByVariant[q];
-        const gpuAvg = avgBy(byVariant[q] || [], metric);
+        const gpuAvg = avgBy(byVariant[q] || [], gpuMetric);
         return cpuAvg && gpuAvg ? gpuAvg / cpuAvg : null;
       }),
     };
@@ -371,7 +379,7 @@ export function renderSpeedupChart(results, metric = 'decode_tok_s') {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        title: titleConfig(`WebGPU Speedup over CPU (${metricLabel})`),
+        title: titleConfig(`WebGPU Speedup over CPU (${metricLabel} @ d0)`),
         legend: {
           ...darkLegend(),
           labels: { ...darkLegend().labels, filter: item => item.text !== '1\u00d7' },

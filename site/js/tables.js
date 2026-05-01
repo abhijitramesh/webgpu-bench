@@ -5,7 +5,10 @@ let lastResults = [];
 let sortState = { key: null, dir: 'asc' };
 
 const NUM_KEYS = new Set([
-  'sizeMB', 'decode_tok_s', 'prefill_tok_s',
+  'sizeMB',
+  'decode_tok_s', 'prefill_tok_s',
+  'decode_tok_s_d0', 'decode_tok_s_dN',
+  'prefill_tok_s_d0', 'prefill_tok_s_dN',
   'cpu_baseline_decode_tok_s', 'cpu_baseline_prefill_tok_s',
   'n_eval', 't_eval_ms',
   'n_p_eval', 't_p_eval_ms', 'wallTimeMs', 'consistency_rate',
@@ -75,8 +78,14 @@ export function renderResultsTable(results) {
     { key: 'status', label: 'Status', priority: 1 },
     { key: 'buildType', label: 'Build', priority: 3 },
     { key: 'webgpuAvailable', label: 'WebGPU', priority: 3 },
-    { key: 'decode_tok_s', label: 'tg tok/s', priority: 1 },
-    { key: 'prefill_tok_s', label: 'pp tok/s', priority: 3 },
+    // tg / pp split into cold-cache (d=0) and depth-loaded (d=N) columns
+    // so Run Study's depth-pair shows as side-by-side numbers instead of
+    // overwriting one with the other. Pre-study and plain-Run records
+    // populate only the side they actually measured; the other reads `—`.
+    { key: 'decode_tok_s_d0', label: 'tg @ d0', priority: 1 },
+    { key: 'decode_tok_s_dN', label: 'tg @ dN', priority: 1 },
+    { key: 'prefill_tok_s_d0', label: 'pp @ d0', priority: 3 },
+    { key: 'prefill_tok_s_dN', label: 'pp @ dN', priority: 3 },
     { key: 'cpu_baseline_decode_tok_s', label: 'CPU tg tok/s', priority: 2 },
     { key: 'cpu_baseline_prefill_tok_s', label: 'CPU pp tok/s', priority: 3 },
     { key: 'n_eval', label: 'n_eval', priority: 3 },
@@ -123,19 +132,27 @@ export function renderResultsTable(results) {
           break;
         case 'decode_tok_s':
         case 'prefill_tok_s':
+        case 'decode_tok_s_d0':
+        case 'decode_tok_s_dN':
+        case 'prefill_tok_s_d0':
+        case 'prefill_tok_s_dN':
         case 'cpu_baseline_decode_tok_s':
         case 'cpu_baseline_prefill_tok_s': {
           // llama-bench style "avg \u00b1 stddev" with the pp{N} / tg{N} test
           // label as a tooltip when the new schema is present. Older records
           // without stddev fall back to the bare avg from formatTokS.
-          const isDecode = col.key === 'decode_tok_s';
-          const isPrefill = col.key === 'prefill_tok_s';
-          const stddev = isDecode ? r.decode_stddev_ts
-            : isPrefill ? r.prefill_stddev_ts
-            : null;
-          const testName = isDecode ? r.tg_test_name
-            : isPrefill ? r.pp_test_name
-            : null;
+          // Depth-suffixed keys read from the matching `_d0` / `_dN`
+          // stddev + test_name fields produced by mergeDepthPairs.
+          let stddev = null;
+          let testName = null;
+          switch (col.key) {
+            case 'decode_tok_s':       stddev = r.decode_stddev_ts;     testName = r.tg_test_name;       break;
+            case 'prefill_tok_s':      stddev = r.prefill_stddev_ts;    testName = r.pp_test_name;       break;
+            case 'decode_tok_s_d0':    stddev = r.decode_stddev_ts_d0;  testName = r.tg_test_name_d0;    break;
+            case 'decode_tok_s_dN':    stddev = r.decode_stddev_ts_dN;  testName = r.tg_test_name_dN;    break;
+            case 'prefill_tok_s_d0':   stddev = r.prefill_stddev_ts_d0; testName = r.pp_test_name_d0;    break;
+            case 'prefill_tok_s_dN':   stddev = r.prefill_stddev_ts_dN; testName = r.pp_test_name_dN;    break;
+          }
           const avg = r[col.key];
           let cell;
           if (avg != null && stddev != null) {
@@ -308,9 +325,14 @@ export function renderCpuGpuTable(results) {
   const container = document.getElementById('cpu-gpu-table');
   if (!container) return;
 
+  // CPU is pinned to d=0 by the runner, so the comparison must read GPU's
+  // d=0 number for an apples-to-apples ratio. Plain-Run records that only
+  // measured d=N have null `_d0` and silently drop out of the comparison
+  // — that's the right call: without a cold-cache GPU sample the speedup
+  // ratio would be measuring different workloads.
   const METRICS = [
-    { field: 'decode_tok_s', label: 'Decode tok/s' },
-    { field: 'prefill_tok_s', label: 'Prefill tok/s' },
+    { cpuField: 'decode_tok_s',  gpuField: 'decode_tok_s_d0',  label: 'Decode tok/s @ d0' },
+    { cpuField: 'prefill_tok_s', gpuField: 'prefill_tok_s_d0', label: 'Prefill tok/s @ d0' },
   ];
 
   const passed = results.filter(r => r.status === 'done');
@@ -353,6 +375,8 @@ export function renderCpuGpuTable(results) {
   // Two-row grouped header: row1 = group labels (CPU, Chromium, …), row2 = metric sub-labels
   // CPU gets colspan = METRICS.length, each GPU browser gets colspan = METRICS.length * 2 (value + speedup per metric)
   const gpuColspan = METRICS.length * 2;
+  // CPU side reads cpuField; GPU side reads gpuField (_d0 for apples-to-
+  // apples). Both labels match the metric's display label.
   let html = '<div class="table-card"><div class="results-wrapper"><table class="results-table"><thead>';
 
   // Row 1: group headers
@@ -387,7 +411,7 @@ export function renderCpuGpuTable(results) {
 
     // CPU columns
     for (const m of METRICS) {
-      const val = avg(cpuItems, m.field);
+      const val = avg(cpuItems, m.cpuField);
       html += `<td><span class="mono">${formatTokS(val)}</span></td>`;
     }
 
@@ -395,8 +419,8 @@ export function renderCpuGpuTable(results) {
     for (const b of gpuBrowsers) {
       const gpuItems = gpuByBrowser[b] || [];
       for (const m of METRICS) {
-        const cpuVal = avg(cpuItems, m.field);
-        const gpuVal = avg(gpuItems, m.field);
+        const cpuVal = avg(cpuItems, m.cpuField);
+        const gpuVal = avg(gpuItems, m.gpuField);
         const speedup = cpuVal && gpuVal ? gpuVal / cpuVal : null;
         const cls = speedup == null ? '' : speedup >= 3 ? 'text-success' : speedup >= 1.5 ? '' : speedup >= 1 ? 'text-muted' : 'text-error';
         html += `<td><span class="mono">${formatTokS(gpuVal)}</span></td>`;
