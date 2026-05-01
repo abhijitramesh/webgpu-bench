@@ -24,7 +24,27 @@ function loadModels() {
       });
     }
   }
-  return { allVariants, quickVariants: data.quickVariants || [] };
+  return {
+    allVariants,
+    quickVariants: data.quickVariants || [],
+    studySelection: data.studySelection || null,
+  };
+}
+
+// Apply the study selection rule from models.json to a flat variant list.
+// Same shape the interactive Run-page "Run study" button uses, so CLI and
+// webapp run the exact same sweep.
+function applyStudyFilter(variants, studySelection) {
+  if (!studySelection) {
+    throw new Error('--study requested but models.json has no studySelection block');
+  }
+  const focusModel = studySelection.focusModel;
+  const focusQuants = new Set(studySelection.focusQuants || []);
+  const standardQuant = studySelection.standardQuant;
+  return variants.filter(v => {
+    if (v.modelName === focusModel) return focusQuants.has(v.name);
+    return v.name === standardQuant;
+  });
 }
 
 // Parse CLI arguments
@@ -32,6 +52,7 @@ function parseArgs() {
   const args = process.argv.slice(2);
   const parsed = {
     quick: false,
+    study: false,
     browsers: null,
     variants: null,
     models: null,
@@ -56,6 +77,8 @@ function parseArgs() {
   for (const arg of args) {
     if (arg === '--quick') {
       parsed.quick = true;
+    } else if (arg === '--study') {
+      parsed.study = true;
     } else if (arg === '--no-webgpu') {
       parsed.noWebgpu = true;
     } else if (arg === '--consistency') {
@@ -85,9 +108,17 @@ function parseArgs() {
 
 export function getConfig() {
   const args = parseArgs();
-  const { allVariants, quickVariants } = loadModels();
+  const { allVariants, quickVariants, studySelection } = loadModels();
 
   let variants = allVariants;
+
+  // Study selection runs first — it picks a curated set the interactive
+  // "Run study" button uses (Llama-3.2-1B-Instruct at four quants for the
+  // headline sweep + every other model at the standard quant). Any
+  // subsequent --models / --variants / --quick narrows further within it.
+  if (args.study) {
+    variants = applyStudyFilter(variants, studySelection);
+  }
 
   // Filter by model name
   if (args.models) {
@@ -135,6 +166,10 @@ export function getConfig() {
 
     // Resume mode: skip browser+variant combos that already succeeded
     RESUME: args.resume || false,
+
+    // Study mode: surfaced in the runner banner. The selection itself was
+    // already applied to MODEL_VARIANTS above; this is just a label.
+    STUDY: args.study || false,
 
     // Browser config
     BROWSERS: browsers,

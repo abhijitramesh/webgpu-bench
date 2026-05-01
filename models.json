@@ -1036,5 +1036,10 @@
     "Q4_K_M",
     "Q8_0"
   ],
-  "defaultQuant": "Q4_K_M"
+  "defaultQuant": "Q4_K_M",
+  "studySelection": {
+    "focusModel": "Llama-3.2-1B-Instruct",
+    "focusQuants": ["Q2_K", "Q4_K_M", "Q8_0", "F16"],
+    "standardQuant": "Q4_K_M"
+  }
 }

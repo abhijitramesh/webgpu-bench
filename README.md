@@ -108,6 +108,7 @@ node runner.js [options]
 |------|-------------|---------|
 | _(none)_ | All 230 variants on default browsers (chromium, plus webkit on macOS) | `node runner.js` |
 | `--quick` | Only Q2_K, Q4_K_M, Q8_0 | `node runner.js --quick` |
+| `--study` | Curated leaderboard sweep — same selection as the interactive Run-page "Run study" button (focus model at four quants + every other model at the standard quant). Defined in `models.json` → `studySelection`. | `node runner.js --study` |
 | `--browsers=` | Comma-separated browser list | `--browsers=chromium,webkit` |
 | `--variants=` | Specific quantization types | `--variants=Q4_K_M,Q8_0` |
 | `--models=` | Filter by model name (substring match) | `--models=Llama-3.2-1B` |

@@ -434,6 +434,7 @@ async function main() {
   console.log(`GPU layers: ${config.N_GPU_LAYERS}`);
   console.log(`Perf:       -p ${config.N_PROMPT} -n ${config.N_GEN} -r ${config.N_REPS}${config.NO_WARMUP ? ' --no-warmup' : ''}`);
   if (LLAMA_CPP_COMMIT) console.log(`llama.cpp:  ${LLAMA_CPP_COMMIT.slice(0, 10)}`);
+  if (config.STUDY) console.log('Study mode: ON (curated leaderboard sweep — see models.json studySelection)');
   if (config.CONSISTENCY) console.log('Consistency mode: ON (CPU baseline + GPU per variant)');
   if (config.RESUME) console.log('Resume mode: ON (skipping already-succeeded benchmarks)');
   console.log('');

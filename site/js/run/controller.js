@@ -1032,19 +1032,18 @@ async function onDownloadClick() {
 
 // ──────────────── Run ────────────────
 
-// Curated leaderboard study: Llama-3.2-1B-Instruct at four quants
-// (Q2_K, Q4_K_M, Q8_0, F16) for the headline-model sweep, plus every other
-// listed model at Q4_K_M as a single representative point. Variants that
-// don't fit the device's memory budget are dropped silently — same rule
-// the "All fit" button enforces. Selects, then triggers onRunClick.
-const STUDY_FOCUS_MODEL = 'Llama-3.2-1B-Instruct';
-const STUDY_FOCUS_QUANTS = new Set(['Q2_K', 'Q4_K_M', 'Q8_0', 'F16']);
-const STUDY_STANDARD_QUANT = 'Q4_K_M';
-
+// Curated leaderboard study: focus model at several quants for a quant
+// sweep, plus every other model at the standard quant as a single
+// representative point. Selection rule lives in models.json
+// (`studySelection`) so the CLI's --study flag and this button stay in
+// sync. Variants that don't fit the device's memory budget are dropped
+// silently — same rule the "All fit" button enforces.
 function isStudyVariant(v) {
   if (!v) return false;
-  if (v.modelName === STUDY_FOCUS_MODEL) return STUDY_FOCUS_QUANTS.has(v.quant);
-  return v.quant === STUDY_STANDARD_QUANT;
+  const sel = state.models?.studySelection;
+  if (!sel) return false;
+  if (v.modelName === sel.focusModel) return (sel.focusQuants || []).includes(v.quant);
+  return v.quant === sel.standardQuant;
 }
 
 async function onRunStudyClick() {
