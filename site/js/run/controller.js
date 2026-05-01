@@ -47,12 +47,13 @@ const state = {
   // d=0 / d=N column pairs so both passes' numbers stay visible
   // instead of the d=N pass overwriting d=0.
   studyMode: false,
-  // User-controlled phase toggles. Defaults match the previous behaviour:
-  // run consistency (CPU baseline + GPU forced-decode) AND run CPU perf
-  // baseline. Both checkable to skip — useful on devices where CPU is too
-  // slow / unreliable to be worth waiting for.
-  skipConsistency: false,
-  skipCpuPerf: false,
+  // User-controlled phase toggles. Both default OFF — a Run (or Run Study)
+  // does GPU perf only unless the user explicitly opts in to the CPU
+  // baseline. The CPU pass is the slowest step on most devices and most
+  // submissions don't need its consistency / comparison output, so making
+  // it opt-in keeps the default experience fast.
+  runConsistency: false,
+  runCpuPerf: false,
   mounted: false,
   // Tracks variants the Run pipeline downloaded this session (as opposed to
   // the standalone Download button or pre-existing cache). Only these are
@@ -722,18 +723,18 @@ function wirePerfInputs() {
       nd.value = String(state.nDepth);
     });
   }
-  const skipCons = $('skip-consistency');
-  if (skipCons) {
-    skipCons.checked = state.skipConsistency;
-    skipCons.addEventListener('change', () => {
-      state.skipConsistency = skipCons.checked;
+  const runCons = $('run-consistency');
+  if (runCons) {
+    runCons.checked = state.runConsistency;
+    runCons.addEventListener('change', () => {
+      state.runConsistency = runCons.checked;
     });
   }
-  const skipCpu = $('skip-cpu-perf');
-  if (skipCpu) {
-    skipCpu.checked = state.skipCpuPerf;
-    skipCpu.addEventListener('change', () => {
-      state.skipCpuPerf = skipCpu.checked;
+  const runCpu = $('run-cpu-perf');
+  if (runCpu) {
+    runCpu.checked = state.runCpuPerf;
+    runCpu.addEventListener('change', () => {
+      state.runCpuPerf = runCpu.checked;
     });
   }
 }
@@ -1558,13 +1559,14 @@ async function runVariantWithIterations(v, row, opts = {}) {
   // tools/llama-bench/llama-bench.cpp): sized to fit prompt+gen+depth so a
   // raised depth doesn't silently overflow the cache.
   const nCtxFor = (depth) => Math.max(DEFAULT_N_CTX, nPrompt + nGen + depth);
-  // Phase toggles from the run page. Combined effect:
-  //   skip both          → only GPU perf, no CPU pass at all
-  //   skip consistency   → CPU perf baseline + GPU perf, no token-id check
-  //   skip CPU perf      → CPU consistency tokens + GPU consistency + GPU perf
-  //   skip neither       → full default flow
-  const runConsistency = !state.skipConsistency;
-  const runCpuPerf = !state.skipCpuPerf;
+  // Phase toggles from the run page. Both default OFF; combined effect:
+  //   neither (default)  → only GPU perf, no CPU pass at all
+  //   run CPU perf       → CPU perf baseline + GPU perf, no token-id check
+  //   run consistency    → CPU consistency tokens + GPU consistency + GPU perf
+  //   both               → full CPU baseline (consistency + 1-rep perf) +
+  //                        GPU consistency + GPU perf
+  const runConsistency = !!state.runConsistency;
+  const runCpuPerf = !!state.runCpuPerf;
   const needCpuPass = runConsistency || runCpuPerf;
 
   // ─── CPU baseline ───

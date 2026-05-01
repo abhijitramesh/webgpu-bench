@@ -82,10 +82,10 @@
 
             <section>
               <h3>What each run does</h3>
-              <p>Each variant is exercised in two passes (skippable — see <em>Skip</em> below):</p>
+              <p>By default each variant runs the GPU perf pass only. The CPU baseline is opt-in via the <em>Run</em> toggles below — flip them on if you want consistency or CPU-vs-GPU comparison numbers.</p>
               <ol>
-                <li><strong>CPU baseline</strong> — generates reference token IDs (for consistency) and a 1-rep CPU perf sample, so the dashboard can show CPU-vs-GPU.</li>
-                <li><strong>GPU pass</strong> — forced-decodes the CPU tokens to compute a top-1 agreement rate (consistency), then runs a llama-bench-style perf sweep: one warmup + <code>reps</code> timed reps for both prompt processing (<code>pp</code>) and token generation (<code>tg</code>). 1-second cooldown between reps lets the GPU clock recover, so reps stay comparable instead of decaying across the sweep.</li>
+                <li><strong>GPU pass (always)</strong> — runs a llama-bench-style perf sweep: one warmup + <code>reps</code> timed reps for both prompt processing (<code>pp</code>) and token generation (<code>tg</code>). 1-second cooldown between reps lets the GPU clock recover, so reps stay comparable instead of decaying across the sweep.</li>
+                <li><strong>CPU baseline (opt-in)</strong> — when <em>Run: Consistency</em> or <em>Run: CPU perf</em> is on, the CPU pass runs first to capture reference token IDs (for the GPU forced-decode agreement check) and/or a 1-rep CPU perf sample (for CPU vs GPU dashboard cells).</li>
               </ol>
             </section>
 
@@ -102,10 +102,10 @@
                 <dd>How many tokens are generated for the <code>tg</code> test. Default <code>128</code>. Larger reps stress sustained decode bandwidth.</dd>
                 <dt><strong>Reps (-r)</strong></dt>
                 <dd>Timed repetitions of each test (after warmup). Default <code>5</code>. The reported figure is mean ± stddev across the reps.</dd>
-                <dt><strong>Skip: Consistency</strong></dt>
-                <dd>Skips the CPU-baseline + GPU-forced-decode agreement check. Use when consistency is failing on a device or you only need perf numbers.</dd>
-                <dt><strong>Skip: CPU perf</strong></dt>
-                <dd>Skips the 1-rep CPU perf baseline. Use on devices where the CPU pass is too slow or unstable to be worth waiting for.</dd>
+                <dt><strong>Run: Consistency</strong></dt>
+                <dd>Off by default. Turns on the CPU-baseline + GPU-forced-decode agreement check. Opt in when you want to verify CPU and GPU produce matching tokens for a given variant.</dd>
+                <dt><strong>Run: CPU perf</strong></dt>
+                <dd>Off by default. Turns on a 1-rep CPU perf baseline alongside the GPU pass so the dashboard's CPU vs GPU cells have data. Opt in when you want apples-to-apples CPU↔GPU numbers; leave off to keep runs short.</dd>
                 <dt><strong>Evict cached GGUFs after each run</strong></dt>
                 <dd>Frees OPFS storage as the queue moves through variants. Only evicts files this session downloaded — files you cached before the run are preserved.</dd>
               </dl>
@@ -240,10 +240,10 @@
               <input type="number" id="iterations-input" class="filter-select run-iter-input" value="5" min="1" max="50" step="1">
             </div>
             <div class="filter-group">
-              <span class="filter-label">Skip</span>
+              <span class="filter-label">Run</span>
               <div class="run-filters-checks">
-                <label class="run-hide-label" title="Skip the consistency check (CPU baseline + GPU forced-decode agreement). Useful when consistency is failing on a device or you only care about perf."><input type="checkbox" id="skip-consistency"> Consistency</label>
-                <label class="run-hide-label" title="Skip the single-rep CPU perf baseline. Useful when CPU runs are too slow or unstable on a device."><input type="checkbox" id="skip-cpu-perf"> CPU perf</label>
+                <label class="run-hide-label" title="Run the consistency check (CPU baseline + GPU forced-decode agreement). Off by default — opt in to verify CPU and GPU produce matching tokens."><input type="checkbox" id="run-consistency"> Consistency</label>
+                <label class="run-hide-label" title="Run a single-rep CPU perf baseline alongside the GPU pass. Off by default — opt in for CPU vs GPU comparison numbers."><input type="checkbox" id="run-cpu-perf"> CPU perf</label>
               </div>
             </div>
           </div>
