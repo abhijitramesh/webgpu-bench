@@ -151,6 +151,10 @@ function flattenForDashboard(r, slug) {
     tg_test_name: tg?.name ?? null,
     pp_n_prompt: pp?.n_prompt ?? r.nPrompt ?? null,
     tg_n_gen:    tg?.n_gen    ?? r.nGen    ?? null,
+    // KV-cache depth the timed reps ran at. Mirrors llama-bench's `-d` and
+    // is per-test in metrics.tests; record-level r.nDepth is the
+    // study/runner-set value, used as a fallback for older exports.
+    n_depth: pp?.n_depth ?? tg?.n_depth ?? r.nDepth ?? 0,
     n_p_eval: r.metrics?.n_p_eval ?? null,
     t_p_eval_ms: r.metrics?.t_p_eval_ms ?? null,
     n_eval: r.metrics?.n_eval ?? null,

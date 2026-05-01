@@ -13,7 +13,7 @@
 //       // consistency phase (set consistencyPrompt to '' to skip)
 //       consistencyPrompt, consistencyNPredict, refTokenIds,
 //       // perf phase
-//       nPrompt, nGen, nReps, noWarmup,
+//       nPrompt, nGen, nReps, nDepth, noWarmup,
 //     },
 //     opfsPath: { rootDir, repo, filename }
 //   }
@@ -162,10 +162,14 @@ function opfsFreeAll(Module) {
 // llama-bench reports avg_ts = (n_tokens * 1e9) / avg_ns and stddev_ts as
 // the std of per-sample t/s, computed independently rather than propagated
 // from stddev_ns (the mapping isn't linear).
-function buildTest(name, n_prompt, n_gen, samples_ns) {
+//
+// `n_depth` carries through unchanged so downstream consumers can label
+// e.g. "pp512 @ d2048" the way llama-bench does (line 1984 of
+// llama.cpp/tools/llama-bench/llama-bench.cpp).
+function buildTest(name, n_prompt, n_gen, n_depth, samples_ns) {
   const n = samples_ns.length;
   if (n === 0) {
-    return { name, n_prompt, n_gen, avg_ns: 0, stddev_ns: 0, avg_ts: 0, stddev_ts: 0, samples_ns: [], samples_ts: [] };
+    return { name, n_prompt, n_gen, n_depth, avg_ns: 0, stddev_ns: 0, avg_ts: 0, stddev_ts: 0, samples_ns: [], samples_ts: [] };
   }
   const avg_ns = samples_ns.reduce((a, b) => a + b, 0) / n;
   const var_ns = n > 1
@@ -184,6 +188,7 @@ function buildTest(name, n_prompt, n_gen, samples_ns) {
     name,
     n_prompt,
     n_gen,
+    n_depth,
     avg_ns: Math.round(avg_ns),
     stddev_ns: Math.round(stddev_ns),
     avg_ts: round2(avg_ts),
@@ -236,6 +241,7 @@ async function runOne({ params, opfsPath }) {
     nPrompt,
     nGen,
     nReps,
+    nDepth = 0,
     noWarmup,
   } = params;
   // The worker only loads via OPFS now: main thread downloads to OPFS,
@@ -409,29 +415,44 @@ async function runOne({ params, opfsPath }) {
   // which the dashboard renders as a dash.
   const wantPp = nPrompt > 0;
   const wantTg = nGen > 0;
+  // Test name suffix mirroring llama-bench (e.g. "pp512 @ d2048").
+  const depthSuffix = nDepth > 0 ? ` @ d${nDepth}` : '';
+  // Each timed rep is preceded by an untimed bench_set_depth call so the KV
+  // cache is in a known state. The C side caches the post-prefill snapshot,
+  // so reps 2..N at the same depth restore from snapshot instead of
+  // re-running the prefill (mirroring llama-bench's `cstate` reuse).
+  const setDepth = async (label) => {
+    const raw = await Module.ccall('bench_set_depth', 'string', ['number'], [nDepth], { async: true });
+    const r = parseBenchResult(`bench_set_depth(${nDepth}) ${label}`, raw);
+    if (nDepth > 0) {
+      log(`bench_set_depth(${nDepth}) ${label}: ${r.cached ? 'restored snapshot' : 'prefilled'}`);
+    }
+  };
   if (wantPp || wantTg) {
     const tests = [];
 
     if (wantPp) {
       try {
         if (!noWarmup) {
-          status('perf', `warmup pp${nPrompt}`, Date.now());
-          log(`bench_pp(${nPrompt}) — warmup`);
+          status('perf', `warmup pp${nPrompt}${depthSuffix}`, Date.now());
+          await setDepth('pp warmup');
+          log(`bench_pp(${nPrompt})${depthSuffix} — warmup`);
           const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
           parseBenchResult('bench_pp warmup', raw);
         }
         const samples_ns = [];
         for (let i = 0; i < nReps; i++) {
-          status('perf', `pp${nPrompt} ${i + 1}/${nReps}`, Date.now());
+          status('perf', `pp${nPrompt}${depthSuffix} ${i + 1}/${nReps}`, Date.now());
+          await setDepth(`pp rep ${i + 1}/${nReps}`);
           const t0 = performance.now();
           const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
           const t_ns = (performance.now() - t0) * 1e6;
           parseBenchResult('bench_pp', raw);
           samples_ns.push(t_ns);
-          log(`pp${nPrompt} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nPrompt / t_ns).toFixed(1)} t/s)`);
+          log(`pp${nPrompt}${depthSuffix} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nPrompt / t_ns).toFixed(1)} t/s)`);
           if (i + 1 < nReps) await sleep(REP_COOLDOWN_MS);
         }
-        tests.push(buildTest(`pp${nPrompt}`, nPrompt, 0, samples_ns));
+        tests.push(buildTest(`pp${nPrompt}${depthSuffix}`, nPrompt, 0, nDepth, samples_ns));
       } catch (err) {
         log(`pp test failed: ${err.message}`);
       }
@@ -444,23 +465,25 @@ async function runOne({ params, opfsPath }) {
           // A 1-token warmup exercises the decode kernel once, which leaves
           // the first timed rep absorbing pipeline-cache / shader-specialize
           // cost on every subsequent step.
-          status('perf', `warmup tg${nGen}`, Date.now());
-          log(`bench_tg(${nGen}) — warmup`);
+          status('perf', `warmup tg${nGen}${depthSuffix}`, Date.now());
+          await setDepth('tg warmup');
+          log(`bench_tg(${nGen})${depthSuffix} — warmup`);
           const raw = await Module.ccall('bench_tg', 'string', ['number'], [nGen], { async: true });
           parseBenchResult('bench_tg warmup', raw);
         }
         const samples_ns = [];
         for (let i = 0; i < nReps; i++) {
-          status('perf', `tg${nGen} ${i + 1}/${nReps}`, Date.now());
+          status('perf', `tg${nGen}${depthSuffix} ${i + 1}/${nReps}`, Date.now());
+          await setDepth(`tg rep ${i + 1}/${nReps}`);
           const t0 = performance.now();
           const raw = await Module.ccall('bench_tg', 'string', ['number'], [nGen], { async: true });
           const t_ns = (performance.now() - t0) * 1e6;
           parseBenchResult('bench_tg', raw);
           samples_ns.push(t_ns);
-          log(`tg${nGen} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nGen / t_ns).toFixed(1)} t/s)`);
+          log(`tg${nGen}${depthSuffix} run ${i + 1}/${nReps}: ${(t_ns / 1e6).toFixed(1)} ms (${(1e9 * nGen / t_ns).toFixed(1)} t/s)`);
           if (i + 1 < nReps) await sleep(REP_COOLDOWN_MS);
         }
-        tests.push(buildTest(`tg${nGen}`, 0, nGen, samples_ns));
+        tests.push(buildTest(`tg${nGen}${depthSuffix}`, 0, nGen, nDepth, samples_ns));
       } catch (err) {
         log(`tg test failed: ${err.message}`);
       }
@@ -471,6 +494,7 @@ async function runOne({ params, opfsPath }) {
         tests,
         n_prompt: wantPp ? nPrompt : 0,
         n_gen: wantTg ? nGen : 0,
+        n_depth: nDepth,
         n_reps: nReps,
       };
     }

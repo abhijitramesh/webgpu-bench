@@ -81,15 +81,22 @@ async function getGpuInfo(page) {
 // `nRepsOverride` lets the caller pin a non-default rep count for this URL
 // (used for the CPU baseline, which runs a single warmup+timed rep — enough
 // for a sanity-check CPU/GPU comparison without a full sweep on CPU).
-function buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds = null, mode = 'both', nRepsOverride = null) {
+function buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds = null, mode = 'both', nRepsOverride = null, nDepth = 0) {
   const harnessUrl = new URL('/harness.html', serverUrl);
+  // n_ctx must accommodate the timed work plus the prefilled depth, same
+  // way llama-bench sizes per-test (line 1211 of llama.cpp/tools/llama-bench/
+  // llama-bench.cpp): n_ctx = n_prompt + n_gen + n_depth. We keep the
+  // configured N_CTX as a floor so very small p/g/d combos still get a
+  // sensible cache.
+  const nCtx = Math.max(config.N_CTX, config.N_PROMPT + config.N_GEN + nDepth);
   harnessUrl.searchParams.set('model', variant.filename);
   harnessUrl.searchParams.set('hfRepo', variant.repo);
   harnessUrl.searchParams.set('nPredict', String(config.N_PREDICT));
   harnessUrl.searchParams.set('nPrompt', String(config.N_PROMPT));
   harnessUrl.searchParams.set('nGen',    String(config.N_GEN));
   harnessUrl.searchParams.set('nReps',   String(nRepsOverride ?? config.N_REPS));
-  harnessUrl.searchParams.set('nCtx', String(config.N_CTX));
+  harnessUrl.searchParams.set('nDepth',  String(nDepth));
+  harnessUrl.searchParams.set('nCtx', String(nCtx));
   harnessUrl.searchParams.set('nGpuLayers', String(nGpuLayers));
   harnessUrl.searchParams.set('mode', mode);
   if (refTokenIds) harnessUrl.searchParams.set('refTokenIds', refTokenIds);
@@ -122,7 +129,7 @@ function getBaselineTokenIds(baselines, browserName, filename) {
 }
 
 // Run a single benchmark via Playwright (chromium)
-async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null, mode = 'both', nRepsOverride = null) {
+async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null, mode = 'both', nRepsOverride = null, nDepth = 0) {
   const context = await browser.newContext();
   const page = await context.newPage();
 
@@ -132,7 +139,7 @@ async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_G
     consoleLogs.push(`[${msg.type()}] ${msg.text()}`);
   });
 
-  const harnessUrl = buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds, mode, nRepsOverride);
+  const harnessUrl = buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds, mode, nRepsOverride, nDepth);
 
   try {
     await page.goto(harnessUrl, { timeout: 30_000 });
@@ -169,8 +176,8 @@ async function runBenchmark(browser, variant, serverUrl, nGpuLayers = config.N_G
 }
 
 // Run a single benchmark in a WebDriverIO Safari session
-async function runBenchmarkSafari(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null, mode = 'both', nRepsOverride = null) {
-  const harnessUrl = buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds, mode, nRepsOverride);
+async function runBenchmarkSafari(browser, variant, serverUrl, nGpuLayers = config.N_GPU_LAYERS, refTokenIds = null, mode = 'both', nRepsOverride = null, nDepth = 0) {
+  const harnessUrl = buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds, mode, nRepsOverride, nDepth);
 
   try {
     await browser.url(harnessUrl);
@@ -224,13 +231,16 @@ function loadPreviousResults() {
   return [];
 }
 
-// Check if a browser+variant+gpu_layers combo already has a successful result
-function alreadyCompleted(previousResults, browserName, filename, nGpuLayers) {
+// Check if a browser+variant+gpu_layers+depth combo already has a successful
+// result. Depth is part of the key so a finished d=0 pass doesn't shadow the
+// pending d=N pass in study mode (and vice versa).
+function alreadyCompleted(previousResults, browserName, filename, nGpuLayers, nDepth) {
   return previousResults.some(
     r =>
       r.browser === browserName &&
       r.filename === filename &&
       r.nGpuLayers === nGpuLayers &&
+      (r.nDepth ?? 0) === nDepth &&
       r.status === 'done'
   );
 }
@@ -262,6 +272,10 @@ function flattenMetrics(metrics) {
 
 // Build a result object from benchmark output
 function makeResult(timestamp, browserName, variant, bench, nGpuLayers, wallTimeMs) {
+  const nDepth = bench.metrics?.n_depth ?? 0;
+  // Same per-test sizing rule as buildHarnessUrl — n_ctx scales with the
+  // depth the run actually used.
+  const nCtx = Math.max(config.N_CTX, config.N_PROMPT + config.N_GEN + nDepth);
   return {
     timestamp,
     browser: browserName,
@@ -276,10 +290,11 @@ function makeResult(timestamp, browserName, variant, bench, nGpuLayers, wallTime
     webgpuAvailable: bench.webgpuAvailable || false,
     gpuAdapterInfo: bench.gpuAdapterInfo || null,
     nGpuLayers,
-    nCtx: config.N_CTX,
+    nCtx,
     nPredict: config.N_PREDICT,
     nPrompt: bench.metrics?.n_prompt ?? 0,
     nGen:    bench.metrics?.n_gen    ?? 0,
+    nDepth,
     nReps:   bench.metrics?.n_reps   ?? 0,
     wallTimeMs,
     metrics: flattenMetrics(bench.metrics),
@@ -323,7 +338,7 @@ async function createSafariSession() {
 // Run a variant in a Playwright browser (chromium) with a hard-kill timeout.
 // Launches a fresh browser per variant to prevent WASM memory accumulation.
 // If the browser hangs past the soft timeout, SIGKILL ensures we don't wait forever.
-async function runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both', nRepsOverride = null) {
+async function runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both', nRepsOverride = null, nDepth = 0) {
   const browserType = getBrowserType(browserName);
   const launchOpts = getBrowserLaunchArgs(browserName);
 
@@ -350,7 +365,7 @@ async function runVariantPlaywright(browserName, variant, serverUrl, timestamp, 
   }, config.TIMEOUTS.total + 5000);
 
   try {
-    const { bench } = await runBenchmark(browser, variant, serverUrl, nGpuLayers, refTokenIds, mode, nRepsOverride);
+    const { bench } = await runBenchmark(browser, variant, serverUrl, nGpuLayers, refTokenIds, mode, nRepsOverride, nDepth);
     clearTimeout(hardTimer);
     const wallTimeMs = Date.now() - startTime;
     return makeResult(timestamp, browserName, variant, bench, nGpuLayers, wallTimeMs);
@@ -375,7 +390,7 @@ async function runVariantPlaywright(browserName, variant, serverUrl, timestamp, 
 
 // Run a variant in Safari/WebKit with a hard-kill timeout.
 // Starts a fresh safaridriver + session per variant so one crash never cascade-fails.
-async function runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both', nRepsOverride = null) {
+async function runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both', nRepsOverride = null, nDepth = 0) {
   let driverProc;
   let session;
   try {
@@ -397,7 +412,7 @@ async function runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTo
   }, config.TIMEOUTS.total + 5000);
 
   try {
-    const { bench } = await runBenchmarkSafari(session, variant, serverUrl, nGpuLayers, refTokenIds, mode, nRepsOverride);
+    const { bench } = await runBenchmarkSafari(session, variant, serverUrl, nGpuLayers, refTokenIds, mode, nRepsOverride, nDepth);
     clearTimeout(hardTimer);
     const wallTimeMs = Date.now() - startTime;
     return makeResult(timestamp, 'webkit', variant, bench, nGpuLayers, wallTimeMs);
@@ -417,11 +432,11 @@ async function runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTo
 }
 
 // Dispatch a variant run to the appropriate browser driver
-async function runVariantInBrowser(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both', nRepsOverride = null) {
+async function runVariantInBrowser(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode = 'both', nRepsOverride = null, nDepth = 0) {
   if (browserName === 'webkit') {
-    return runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode, nRepsOverride);
+    return runVariantSafari(variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode, nRepsOverride, nDepth);
   }
-  return runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode, nRepsOverride);
+  return runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode, nRepsOverride, nDepth);
 }
 
 // Main — variant-first loop: each variant downloads to OPFS in a fresh
@@ -433,7 +448,7 @@ async function main() {
   console.log(`Variants: ${config.MODEL_VARIANTS.length} models`);
   console.log(`Machine:  ${config.MACHINE.platform}/${config.MACHINE.arch} - ${config.MACHINE.cpus}`);
   console.log(`GPU layers: ${config.N_GPU_LAYERS}`);
-  console.log(`Perf:       -p ${config.N_PROMPT} -n ${config.N_GEN} -r ${config.N_REPS}${config.NO_WARMUP ? ' --no-warmup' : ''}`);
+  console.log(`Perf:       -p ${config.N_PROMPT} -n ${config.N_GEN} -d ${config.N_DEPTH} -r ${config.N_REPS}${config.NO_WARMUP ? ' --no-warmup' : ''}`);
   if (LLAMA_CPP_COMMIT) console.log(`llama.cpp:  ${LLAMA_CPP_COMMIT.slice(0, 10)}`);
   if (config.STUDY) console.log('Study mode: ON (curated leaderboard sweep — see models.json studySelection)');
   if (config.CONSISTENCY) console.log('Consistency mode: ON (CPU baseline + GPU per variant)');
@@ -517,44 +532,64 @@ async function main() {
       }
     }
 
-    // Phase 2: GPU (or configured nGpuLayers) run across all browsers
+    // Phase 2: GPU (or configured nGpuLayers) run across all browsers.
+    //
+    // Depth schedule: study mode runs each variant×browser at BOTH d=0 (the
+    // historical baseline) and d=N_DEPTH so we can compare cold-cache and
+    // depth-loaded numbers side by side. Outside study mode we run one pass
+    // at the configured N_DEPTH (default 2048) — single record, matching the
+    // upstream llama-bench `-d` flag.
+    const depthsToRun = (config.STUDY && config.N_DEPTH > 0)
+      ? [0, config.N_DEPTH]
+      : [config.N_DEPTH];
+
     for (const browserName of activeBrowsers) {
-      // Resume: skip already-succeeded benchmarks
-      if (config.RESUME && alreadyCompleted(previousResults, browserName, variant.filename, config.N_GPU_LAYERS)) {
-        console.log(`  ${browserName}: skipped (already done)`);
-        continue;
+      for (const nDepth of depthsToRun) {
+        const depthLabel = nDepth > 0 ? ` @ d${nDepth}` : '';
+
+        // Resume: skip already-succeeded benchmarks (depth-aware)
+        if (config.RESUME && alreadyCompleted(previousResults, browserName, variant.filename, config.N_GPU_LAYERS, nDepth)) {
+          console.log(`  ${browserName}${depthLabel}: skipped (already done)`);
+          continue;
+        }
+
+        process.stdout.write(`  ${browserName}${depthLabel}... `);
+
+        const refTokenIds = config.CONSISTENCY
+          ? tokenIdsToCsv(getBaselineTokenIds(cpuBaselines, browserName, variant.filename))
+          : null;
+
+        // GPU pass: consistency forced-decode (if CPU baseline present) + perf
+        // sweep, both within the same model load. Consistency uses bench_run
+        // / bench_eval_tokens which clear+reload the cache themselves, so it
+        // co-exists fine with the depth-prefilled perf phase. mode='perf' if
+        // no consistency wanted at all, otherwise 'both'. We only request
+        // consistency on the d=0 pass — the forced-decode metric is depth-
+        // independent and re-running it would just waste time.
+        const wantConsistency = config.CONSISTENCY && nDepth === 0;
+        const gpuMode = wantConsistency ? 'both' : 'perf';
+        const result = await runVariantInBrowser(
+          browserName, variant, serverUrl, timestamp, config.N_GPU_LAYERS,
+          wantConsistency ? refTokenIds : null, gpuMode, null, nDepth
+        );
+
+        allResults.push(result);
+
+        if (result.status === 'done' && result.metrics?.tests) {
+          const tests = result.metrics.tests;
+          const fmt = (prefix) => {
+            const t = tests.find(x => x.name?.startsWith(prefix));
+            return t ? `${t.name}: ${t.avg_ts.toFixed(2)} \u00b1 ${t.stddev_ts.toFixed(2)} t/s` : `${prefix}: \u2014`;
+          };
+          const consistencyLabel = wantConsistency ? ` | ${formatConsistency(result.consistency)}` : '';
+          console.log(`OK | ${fmt('pp')} | ${fmt('tg')} | wall: ${(result.wallTimeMs / 1000).toFixed(1)}s${consistencyLabel}`);
+        } else {
+          console.log(`FAIL | ${result.error || 'unknown error'}`);
+        }
+
+        // Save intermediate results (crash resilience)
+        fs.writeFileSync(path.join(config.RESULTS_DIR, 'results.json'), JSON.stringify(allResults, null, 2));
       }
-
-      process.stdout.write(`  ${browserName}... `);
-
-      const refTokenIds = config.CONSISTENCY
-        ? tokenIdsToCsv(getBaselineTokenIds(cpuBaselines, browserName, variant.filename))
-        : null;
-
-      // GPU pass: consistency forced-decode (if CPU baseline present) + perf
-      // sweep, both within the same model load. mode='perf' if no consistency
-      // wanted at all, otherwise 'both'.
-      const gpuMode = config.CONSISTENCY ? 'both' : 'perf';
-      const result = await runVariantInBrowser(
-        browserName, variant, serverUrl, timestamp, config.N_GPU_LAYERS, refTokenIds, gpuMode
-      );
-
-      allResults.push(result);
-
-      if (result.status === 'done' && result.metrics?.tests) {
-        const tests = result.metrics.tests;
-        const fmt = (prefix) => {
-          const t = tests.find(x => x.name?.startsWith(prefix));
-          return t ? `${t.name}: ${t.avg_ts.toFixed(2)} \u00b1 ${t.stddev_ts.toFixed(2)} t/s` : `${prefix}: \u2014`;
-        };
-        const consistencyLabel = config.CONSISTENCY ? ` | ${formatConsistency(result.consistency)}` : '';
-        console.log(`OK | ${fmt('pp')} | ${fmt('tg')} | wall: ${(result.wallTimeMs / 1000).toFixed(1)}s${consistencyLabel}`);
-      } else {
-        console.log(`FAIL | ${result.error || 'unknown error'}`);
-      }
-
-      // Save intermediate results (crash resilience)
-      fs.writeFileSync(path.join(config.RESULTS_DIR, 'results.json'), JSON.stringify(allResults, null, 2));
     }
   }
 

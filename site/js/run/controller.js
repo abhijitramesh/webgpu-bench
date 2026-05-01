@@ -22,6 +22,7 @@ const YIELD_BETWEEN_RUNS_MS = 500;
 // llama-bench defaults: -p 512 -n 128 -r 5
 const DEFAULT_N_PROMPT = 512;
 const DEFAULT_N_GEN = 128;
+const DEFAULT_N_DEPTH = 2048;
 const DEFAULT_ITERATIONS = 5;
 const MIN_ITERATIONS_FOR_SUBMIT = 5;
 
@@ -40,6 +41,7 @@ const state = {
   iterations: DEFAULT_ITERATIONS,
   nPrompt: DEFAULT_N_PROMPT,
   nGen: DEFAULT_N_GEN,
+  nDepth: DEFAULT_N_DEPTH,
   // User-controlled phase toggles. Defaults match the previous behaviour:
   // run consistency (CPU baseline + GPU forced-decode) AND run CPU perf
   // baseline. Both checkable to skip — useful on devices where CPU is too
@@ -704,6 +706,15 @@ function wirePerfInputs() {
       const n = Math.max(0, Math.min(4096, parseInt(ng.value, 10)));
       state.nGen = Number.isFinite(n) ? n : DEFAULT_N_GEN;
       ng.value = String(state.nGen);
+    });
+  }
+  const nd = $('n-depth-input');
+  if (nd) {
+    nd.value = String(state.nDepth);
+    nd.addEventListener('change', () => {
+      const n = Math.max(0, Math.min(32768, parseInt(nd.value, 10)));
+      state.nDepth = Number.isFinite(n) ? n : DEFAULT_N_DEPTH;
+      nd.value = String(state.nDepth);
     });
   }
   const skipCons = $('skip-consistency');
@@ -1400,6 +1411,7 @@ async function runBenchmarkInWorker(v, params, callbacks) {
     nPrompt: params.nPrompt ?? 0,
     nGen:    params.nGen    ?? 0,
     nReps:   params.nReps   ?? DEFAULT_ITERATIONS,
+    nDepth:  params.nDepth  ?? 0,
     noWarmup: !!params.noWarmup,
   };
 
@@ -1453,6 +1465,11 @@ async function runVariantWithIterations(v, row) {
   const nReps = Math.max(1, state.iterations || DEFAULT_ITERATIONS);
   const nPrompt = Math.max(0, state.nPrompt ?? DEFAULT_N_PROMPT);
   const nGen = Math.max(0, state.nGen ?? DEFAULT_N_GEN);
+  const nDepth = Math.max(0, state.nDepth ?? DEFAULT_N_DEPTH);
+  // Per-test n_ctx mirrors llama-bench (line 1211 of
+  // tools/llama-bench/llama-bench.cpp): sized to fit prompt+gen+depth so a
+  // raised depth doesn't silently overflow the cache.
+  const nCtxFor = (depth) => Math.max(DEFAULT_N_CTX, nPrompt + nGen + depth);
   // Phase toggles from the run page. Combined effect:
   //   skip both          → only GPU perf, no CPU pass at all
   //   skip consistency   → CPU perf baseline + GPU perf, no token-id check
@@ -1480,8 +1497,11 @@ async function runVariantWithIterations(v, row) {
         refTokenIds: null,
         nPrompt: runCpuPerf ? nPrompt : 0,
         nGen:    runCpuPerf ? nGen    : 0,
+        // CPU baseline keeps depth=0 — its job is reference-token capture
+        // and a single-rep perf comparator, not depth-loaded sweeping.
+        nDepth: 0,
         nReps: 1,
-        nCtx: DEFAULT_N_CTX,
+        nCtx: nCtxFor(0),
         nGpuLayers: 0,
       }, {
         onStatus: (status, msg, sinceMs) => row.setStatus(`cpu/${status}`, msg, sinceMs),
@@ -1525,8 +1545,9 @@ async function runVariantWithIterations(v, row) {
       refTokenIds: refTokenIds || null,
       nPrompt,
       nGen,
+      nDepth,
       nReps,
-      nCtx: DEFAULT_N_CTX,
+      nCtx: nCtxFor(nDepth),
       nGpuLayers: DEFAULT_N_GPU_LAYERS,
     }, {
       onStatus: (s, m, sinceMs) => row.setStatus(`gpu/${s}`, m, sinceMs),
@@ -1605,6 +1626,7 @@ function makeRecord(v, vr, machine, browser, wallTimeMs) {
     nPredict: DEFAULT_N_PREDICT,
     nPrompt: gpu?.metrics?.n_prompt ?? 0,
     nGen: gpu?.metrics?.n_gen ?? 0,
+    nDepth: gpu?.metrics?.n_depth ?? 0,
     nReps: gpu?.metrics?.n_reps ?? 0,
     nGpuLayers: DEFAULT_N_GPU_LAYERS,
     timestamp: new Date().toISOString(),

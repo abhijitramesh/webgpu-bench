@@ -63,6 +63,7 @@ function parseArgs() {
     nPrompt: null,
     nGen: null,
     nReps: null,
+    nDepth: null,
   };
 
   const intArg = (arg, name) => {
@@ -93,6 +94,8 @@ function parseArgs() {
       parsed.nGen = intArg(arg, '--n-gen');
     } else if (arg.startsWith('--n-reps=')) {
       parsed.nReps = intArg(arg, '--n-reps');
+    } else if (arg.startsWith('--n-depth=')) {
+      parsed.nDepth = intArg(arg, '--n-depth');
     } else if (arg.startsWith('--browsers=')) {
       parsed.browsers = arg.split('=')[1].split(',');
     } else if (arg.startsWith('--variants=')) {
@@ -157,6 +160,10 @@ export function getConfig() {
     N_PROMPT: args.nPrompt ?? 512,
     N_GEN:    args.nGen    ?? 128,
     N_REPS:   args.nReps   ?? 5,
+    // KV-cache prefill depth before each timed pp/tg rep (llama-bench `-d`).
+    // Default 2048 mirrors the typical context-loaded use-case. Study mode
+    // additionally pairs every variant with a d=0 baseline run.
+    N_DEPTH:  args.nDepth  ?? 2048,
     NO_WARMUP: args.noWarmup || false,
     N_CTX: 2048,
     N_GPU_LAYERS: args.noWebgpu ? 0 : 999,

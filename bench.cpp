@@ -24,6 +24,13 @@ static llama_sampler * g_sampler = nullptr;
 static const llama_vocab * g_vocab = nullptr;
 static int g_n_ctx = 2048;
 
+// Snapshot of the KV cache after a successful bench_set_depth call. Lets
+// repeated reps at the same depth skip the prefill cost — same trick
+// llama-bench's `cstate` plays in tools/llama-bench/llama-bench.cpp.
+// Reset whenever the model/context is (re)created.
+static int                  g_depth_cached = -1;
+static std::vector<uint8_t> g_depth_state;
+
 // Static buffer for returning JSON strings to JS
 // Sized for bench_run output: ~200 fixed fields + 4096 text + 900 token_ids
 static char g_result_buf[16384];
@@ -53,6 +60,11 @@ int bench_load(const char * model_path, int n_ctx, int n_gpu_layers, int use_mma
     if (g_sampler) { llama_sampler_free(g_sampler); g_sampler = nullptr; }
     if (g_ctx)     { llama_free(g_ctx);             g_ctx = nullptr; }
     if (g_model)   { llama_model_free(g_model);     g_model = nullptr; }
+
+    // Old depth snapshot is bound to the freed context — invalidate it so
+    // the next bench_set_depth doesn't try to restore stale bytes.
+    g_depth_cached = -1;
+    g_depth_state.clear();
 
     g_n_ctx = n_ctx;
 
@@ -333,11 +345,106 @@ const char* bench_eval_tokens(const char* prompt, const char* ref_ids_csv) {
     return g_result_buf;
 }
 
+// Random-token prefill loop shared by bench_pp and bench_set_depth. Uses BOS
+// as the first token if the vocab expects one (only when n_pos_start == 0,
+// i.e. the cache is empty), random fillers otherwise. Returns 0 on success,
+// or the position at which llama_decode failed.
+static int prefill_random_tokens(int n_tokens_total, int n_pos_start) {
+    const int32_t n_vocab = llama_vocab_n_tokens(g_vocab);
+    const int n_batch = g_n_ctx;
+    std::vector<llama_token> tokens(n_batch);
+
+    int n_processed = 0;
+    while (n_processed < n_tokens_total) {
+        const int n_tokens = std::min(n_tokens_total - n_processed, n_batch);
+        const bool first_in_ctx = (n_pos_start == 0 && n_processed == 0);
+        tokens[0] = (first_in_ctx && llama_vocab_get_add_bos(g_vocab))
+            ? llama_vocab_bos(g_vocab)
+            : std::rand() % n_vocab;
+        for (int i = 1; i < n_tokens; i++) {
+            tokens[i] = std::rand() % n_vocab;
+        }
+        if (llama_decode(g_ctx, llama_batch_get_one(tokens.data(), n_tokens))) {
+            return n_processed > 0 ? n_processed : 1;
+        }
+        n_processed += n_tokens;
+    }
+    return 0;
+}
+
+// Prefill the KV cache to a given depth so the subsequent bench_pp/bench_tg
+// runs at non-zero context. Mirrors the depth setup in llama-bench's main
+// loop (tools/llama-bench/llama-bench.cpp lines 2320-2358): clear the cache,
+// random-token prefill, then snapshot via llama_state_seq_get_data so a
+// follow-up call at the same depth restores the snapshot instead of
+// recomputing. Caller times bench_pp/bench_tg only — this call is untimed
+// setup, the same way llama-bench's depth fill is excluded from t_start.
+//
+// n_depth == 0 just clears the cache (no prefill, no snapshot reuse).
+const char * bench_set_depth(int n_depth) {
+    if (!g_model || !g_ctx) {
+        snprintf(g_result_buf, sizeof(g_result_buf),
+            "{\"error\":\"model not loaded\"}");
+        return g_result_buf;
+    }
+    if (n_depth < 0) {
+        snprintf(g_result_buf, sizeof(g_result_buf),
+            "{\"error\":\"n_depth must be >= 0\"}");
+        return g_result_buf;
+    }
+
+    llama_memory_clear(llama_get_memory(g_ctx), false);
+
+    if (n_depth == 0) {
+        llama_synchronize(g_ctx);
+        snprintf(g_result_buf, sizeof(g_result_buf),
+            "{\"success\":true,\"n_depth\":0,\"cached\":false}");
+        return g_result_buf;
+    }
+
+    // Cache hit: restore the snapshot we took on a previous call. set_data
+    // returns the number of bytes consumed; 0 means the snapshot is
+    // incompatible with the current context (e.g. n_ctx changed) and we
+    // fall through to re-prefill.
+    if (n_depth == g_depth_cached && !g_depth_state.empty()) {
+        const size_t ret = llama_state_seq_set_data(
+            g_ctx, g_depth_state.data(), g_depth_state.size(), 0);
+        if (ret > 0) {
+            llama_synchronize(g_ctx);
+            snprintf(g_result_buf, sizeof(g_result_buf),
+                "{\"success\":true,\"n_depth\":%d,\"cached\":true}", n_depth);
+            return g_result_buf;
+        }
+        g_depth_cached = -1;
+        g_depth_state.clear();
+    }
+
+    const int err_pos = prefill_random_tokens(n_depth, 0);
+    if (err_pos != 0) {
+        snprintf(g_result_buf, sizeof(g_result_buf),
+            "{\"error\":\"depth decode failed near processed=%d\"}", err_pos);
+        return g_result_buf;
+    }
+    llama_synchronize(g_ctx);
+
+    g_depth_cached = n_depth;
+    g_depth_state.resize(llama_state_seq_get_size(g_ctx, 0));
+    llama_state_seq_get_data(g_ctx, g_depth_state.data(), g_depth_state.size(), 0);
+
+    snprintf(g_result_buf, sizeof(g_result_buf),
+        "{\"success\":true,\"n_depth\":%d,\"cached\":false}", n_depth);
+    return g_result_buf;
+}
+
 // llama-bench-style synthetic-token prefill test. Mirrors test_prompt() in
-// tools/llama-bench/llama-bench.cpp: BOS as the first token (when the vocab
-// expects one) and uniformly-random fillers thereafter, batched up to n_ctx.
-// Caller times the call; we just clear the KV, run the work, synchronize, and
-// return. Unlike bench_run there is no sampler involvement.
+// tools/llama-bench/llama-bench.cpp: BOS as the first token (when the cache
+// is empty AND the vocab expects one) and uniformly-random fillers
+// thereafter, batched up to n_ctx. Caller times the call; we just run the
+// work, synchronize, and return. Unlike bench_run there is no sampler.
+//
+// Cache state is owned by the caller — bench_set_depth() must run first to
+// either clear (d=0) or pre-fill the KV. We don't clear here so depth runs
+// stay intact for the timed measurement.
 const char * bench_pp(int n_prompt) {
     if (!g_model || !g_ctx) {
         snprintf(g_result_buf, sizeof(g_result_buf),
@@ -350,27 +457,12 @@ const char * bench_pp(int n_prompt) {
         return g_result_buf;
     }
 
-    llama_memory_clear(llama_get_memory(g_ctx), false);
-
-    const int32_t n_vocab = llama_vocab_n_tokens(g_vocab);
-    const int n_batch = g_n_ctx;  // ctx_params.n_batch is set to n_ctx in bench_load
-    std::vector<llama_token> tokens(n_batch);
-
-    int n_processed = 0;
-    while (n_processed < n_prompt) {
-        const int n_tokens = std::min(n_prompt - n_processed, n_batch);
-        tokens[0] = (n_processed == 0 && llama_vocab_get_add_bos(g_vocab))
-            ? llama_vocab_bos(g_vocab)
-            : std::rand() % n_vocab;
-        for (int i = 1; i < n_tokens; i++) {
-            tokens[i] = std::rand() % n_vocab;
-        }
-        if (llama_decode(g_ctx, llama_batch_get_one(tokens.data(), n_tokens))) {
-            snprintf(g_result_buf, sizeof(g_result_buf),
-                "{\"error\":\"prefill decode failed at processed=%d\"}", n_processed);
-            return g_result_buf;
-        }
-        n_processed += n_tokens;
+    const int n_pos_start = (int) llama_memory_seq_pos_max(llama_get_memory(g_ctx), 0) + 1;
+    const int err_pos = prefill_random_tokens(n_prompt, n_pos_start);
+    if (err_pos != 0) {
+        snprintf(g_result_buf, sizeof(g_result_buf),
+            "{\"error\":\"prefill decode failed at processed=%d\"}", err_pos);
+        return g_result_buf;
     }
     llama_synchronize(g_ctx);
 
@@ -380,10 +472,15 @@ const char * bench_pp(int n_prompt) {
 }
 
 // llama-bench-style decode test. Mirrors test_gen() in
-// tools/llama-bench/llama-bench.cpp: prime with BOS (or a random token if the
-// vocab doesn't expect BOS), then loop n_gen single-token decodes with a
-// synchronize after each one — the synchronize is what makes wall time
-// reflect per-token GPU latency rather than dispatch queue depth.
+// tools/llama-bench/llama-bench.cpp: prime the first decode with BOS (only
+// when the cache is empty AND the vocab expects BOS), random token
+// otherwise, then loop n_gen single-token decodes with a synchronize after
+// each — the synchronize is what makes wall time reflect per-token GPU
+// latency rather than dispatch queue depth.
+//
+// Cache state is owned by the caller — bench_set_depth() must run first.
+// When depth > 0 the cache already holds a BOS at position 0, so we never
+// re-prime with BOS here.
 const char * bench_tg(int n_gen) {
     if (!g_model || !g_ctx) {
         snprintf(g_result_buf, sizeof(g_result_buf),
@@ -396,12 +493,11 @@ const char * bench_tg(int n_gen) {
         return g_result_buf;
     }
 
-    llama_memory_clear(llama_get_memory(g_ctx), false);
-
     const int32_t n_vocab = llama_vocab_n_tokens(g_vocab);
-    llama_token token = llama_vocab_get_add_bos(g_vocab)
+    const int n_pos_start = (int) llama_memory_seq_pos_max(llama_get_memory(g_ctx), 0) + 1;
+    llama_token token = (n_pos_start == 0 && llama_vocab_get_add_bos(g_vocab))
         ? llama_vocab_bos(g_vocab)
-        : std::rand() % n_vocab;
+        : (llama_token)(std::rand() % n_vocab);
 
     for (int i = 0; i < n_gen; i++) {
         if (llama_decode(g_ctx, llama_batch_get_one(&token, 1))) {
@@ -469,6 +565,8 @@ void bench_exit() {
     if (g_ctx)     { llama_free(g_ctx);             g_ctx = nullptr; }
     if (g_model)   { llama_model_free(g_model);     g_model = nullptr; }
     g_vocab = nullptr;
+    g_depth_cached = -1;
+    g_depth_state.clear();
     llama_backend_free();
 }
 

@@ -30,6 +30,7 @@ window.addEventListener('unhandledrejection', (e) => {
   const nPrompt             = parseInt(params.get('nPrompt')    || '512', 10);
   const nGen                = parseInt(params.get('nGen')       || '128', 10);
   const nReps               = parseInt(params.get('nReps')      || '5', 10);
+  const nDepth              = parseInt(params.get('nDepth')     || '0', 10);
   const nCtx                = parseInt(params.get('nCtx')       || '2048', 10);
   const nGpuLayers          = parseInt(params.get('nGpuLayers') || '999', 10);
   const refTokenIds         = params.get('refTokenIds') || null;
@@ -145,6 +146,7 @@ window.addEventListener('unhandledrejection', (e) => {
         nPrompt: runPerf ? nPrompt : 0,
         nGen:    runPerf ? nGen    : 0,
         nReps,
+        nDepth:  runPerf ? nDepth  : 0,
         noWarmup: false,
       },
       opfsPath: { rootDir: OPFS_ROOT_NAME, repo: hfRepo, filename: modelFile },
