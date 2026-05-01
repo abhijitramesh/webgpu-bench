@@ -9,8 +9,7 @@ pinned: false
 short_description: One-click browser benchmark for GGUF models on WebGPU + WASM
 hf_oauth: true
 hf_oauth_scopes:
-  - read-repos
-  - write-repos
+  - write-discussions
 ---
 
 # WebGPU Benchmark — One Click

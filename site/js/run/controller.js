@@ -2015,9 +2015,9 @@ function wireHubHandlers() {
             avatarUrl: state.hfSession.avatarUrl || null,
           } : null,
         });
-        const link = res.commitUrl
-          || `https://huggingface.co/datasets/${HF_DATASET_REPO}/blob/main/${res.path}`;
-        logLine(`Submitted ${eligible.length} variant(s): ${link}`);
+        const link = res.pullRequestUrl
+          || `https://huggingface.co/datasets/${HF_DATASET_REPO}/discussions`;
+        logLine(`Opened PR with ${eligible.length} variant(s): ${link}`);
         // Restore the real label before flashing so the post-flash revert
         // doesn't snap back to "Submitting…".
         submitBtn.textContent = original;

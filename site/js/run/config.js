@@ -14,7 +14,12 @@ export const CONSISTENCY_PROMPT = 'Explain quantum computing in simple terms.';
 export const HF_DATASET_REPO = 'abhijitramesh/webgpu-bench-leaderboard';
 
 // Scopes must match the ones declared in spaces/README.md frontmatter.
-export const HF_OAUTH_SCOPES = ['read-repos', 'write-repos'];
+// `write-discussions` is the minimum needed to open a community PR against
+// the leaderboard dataset on behalf of the signed-in user. `openid` and
+// `profile` are auto-included for Space OAuth, so we don't need to ask for
+// `read-repos`/`write-repos` (which would grant write to ALL the user's
+// repos — far more than needed for a single PR).
+export const HF_OAUTH_SCOPES = ['write-discussions'];
 
 export function isHubConfigured() {
   // Space-OAuth works whenever the dataset is set. The OAuth client ID is

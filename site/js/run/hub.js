@@ -11,9 +11,11 @@
 //      token in localStorage. The Run controller restores any previously
 //      saved benchmark results from localStorage so they survive the
 //      OAuth round-trip.
-//   3. Clicking [Submit] calls `submitResultsToDataset()` which commits a
-//      JSON file (one per machine-slug / browser / session) as a PR to the
-//      leaderboard dataset.
+//   3. Clicking [Submit] calls `submitResultsToDataset()` which opens a
+//      community Pull Request adding a JSON file (one per machine-slug /
+//      browser / session) against the leaderboard dataset. We open a PR
+//      (not a direct commit) so any signed-in user can submit — they only
+//      need the `write-discussions` scope, not write access to the dataset.
 
 import {
   oauthLoginUrl,
@@ -135,7 +137,7 @@ export async function fetchWhoAmI(token) {
  * @param {{name: string, hubId?: string, avatarUrl?: string}} [opts.submittedBy]
  *   — captured from the OAuth session and stamped onto each record so the
  *   dashboard can attribute submissions back to a HF user.
- * @returns {Promise<{ path: string, commit?: string, prUrl?: string }>}
+ * @returns {Promise<{ path: string, commit?: string, pullRequestUrl?: string }>}
  */
 export async function submitResultsToDataset(results, {
   token,
@@ -163,16 +165,20 @@ export async function submitResultsToDataset(results, {
   const body = JSON.stringify(stamped, null, 2);
   const blob = new Blob([body], { type: 'application/json' });
 
+  // isPullRequest: true so any signed-in user can submit — the upload becomes
+  // a community PR against the dataset rather than a direct commit (which
+  // would 403 for everyone except the dataset owner).
   const res = await uploadFile({
     repo: { type: 'dataset', name: datasetRepo },
     credentials: { accessToken: token },
     file: { path, content: blob },
     commitTitle: `bench: ${machineSlug} / ${browser} / ${results.length} variants`,
+    isPullRequest: true,
   });
 
   return {
     path,
     commit: res?.commit?.oid || null,
-    commitUrl: `https://huggingface.co/datasets/${datasetRepo}/blob/main/${path}`,
+    pullRequestUrl: res?.pullRequestUrl || null,
   };
 }
