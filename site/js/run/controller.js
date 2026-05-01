@@ -3,7 +3,7 @@
 // classes. Detects `surface` (localhost / space / pages) to gate the
 // server save checkbox and the HF hub sign-in/submit row.
 
-import { localSource, hostedSource, inventoryOpfs, purgeOpfs, OPFS_ROOT_NAME } from './source.js';
+import { ggufSource, inventoryOpfs, purgeOpfs, OPFS_ROOT_NAME } from './source.js';
 import { getDeviceBudgetMB, variantFits, describeDevice, isMobileDevice } from './device.js';
 import {
   resumeHFSession, beginHFSignIn, signOutHF, submitResultsToDataset,
@@ -26,7 +26,7 @@ const MIN_ITERATIONS_FOR_SUBMIT = 5;
 
 const state = {
   surface: 'pages',    // 'localhost' | 'space' | 'pages' | 'file'
-  source: null,        // localSource() | hostedSource()
+  source: null,        // ggufSource() — single OPFS-backed source
   models: null,        // parsed models.json
   budget: null,        // { budgetMB, memGB, quotaMB, probedMB, isMobile, source }
   device: null,        // describeDevice() output
@@ -135,8 +135,8 @@ async function loadModels() {
 }
 
 async function loadCacheStatus() {
-  // Cache lives in OPFS regardless of surface — both localSource and
-  // hostedSource write through the same `opfsHandleForModel` path.
+  // Cache lives in OPFS on every surface — ggufSource writes through
+  // the same `opfsHandleForModel` path everywhere.
   try {
     return await inventoryOpfs();
   } catch (err) {
@@ -1800,7 +1800,7 @@ export async function mountRunSection() {
   state.mounted = true;
 
   state.surface = await detectSurface();
-  state.source = state.surface === 'localhost' ? localSource() : hostedSource();
+  state.source = ggufSource();
   state.budget = await getDeviceBudgetMB();
   state.device = await describeDevice();
   // Don't block mount on the build-info fetch — it's non-critical and the

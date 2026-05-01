@@ -36,7 +36,7 @@ const status = (s, msg, sinceMs) => post({ type: 'status', status: s, msg, since
 
 // Below this many compared tokens, the consistency agreement rate is
 // statistical noise (e.g. early-EOS models that produce 1 token always
-// report 100%). Mirror of CONSISTENCY_MIN_TOKENS in core.js.
+// report 100%).
 const CONSISTENCY_MIN_TOKENS = 8;
 
 // Sleep between perf reps so the GPU clock state can recover. Without
@@ -46,7 +46,7 @@ const REP_COOLDOWN_MS = 1000;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // llama.cpp/ggml emit info, warnings, AND errors all to stderr. Tag only the
-// actually-bad lines as :err so real failures stand out. Mirror in core.js.
+// actually-bad lines as :err so real failures stand out.
 function classifyWasmStderr(text) {
   return /\b(error|abort(ed)?|failed|fatal|panic|assert)\b|GGML_ASSERT/i.test(text)
     ? '[wasm:err]' : '[wasm]';
@@ -159,7 +159,9 @@ function opfsFreeAll(Module) {
 }
 
 // Aggregate raw nanosecond samples into the llama-bench result shape.
-// Mirrors core.js buildTest — keep them identical.
+// llama-bench reports avg_ts = (n_tokens * 1e9) / avg_ns and stddev_ts as
+// the std of per-sample t/s, computed independently rather than propagated
+// from stddev_ns (the mapping isn't linear).
 function buildTest(name, n_prompt, n_gen, samples_ns) {
   const n = samples_ns.length;
   if (n === 0) {

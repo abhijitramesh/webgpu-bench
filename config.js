@@ -36,7 +36,6 @@ function parseArgs() {
     variants: null,
     models: null,
     noWebgpu: false,
-    noCache: false,
     consistency: false,
     resume: false,
     noWarmup: false,
@@ -59,8 +58,6 @@ function parseArgs() {
       parsed.quick = true;
     } else if (arg === '--no-webgpu') {
       parsed.noWebgpu = true;
-    } else if (arg === '--no-cache') {
-      parsed.noCache = true;
     } else if (arg === '--consistency') {
       parsed.consistency = true;
     } else if (arg === '--resume') {
@@ -132,9 +129,6 @@ export function getConfig() {
     NO_WARMUP: args.noWarmup || false,
     N_CTX: 2048,
     N_GPU_LAYERS: args.noWebgpu ? 0 : 999,
-
-    // Disable model download caching (always fetch from HuggingFace)
-    NO_CACHE: args.noCache || false,
 
     // Consistency mode: run CPU baselines and compare
     CONSISTENCY: args.consistency || false,

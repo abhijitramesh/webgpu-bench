@@ -1,7 +1,8 @@
 # Build output
 build/
 
-# Model download cache
+# Legacy model download cache — kept gitignored for safety so an existing
+# local cache/ dir never accidentally gets staged. Code path is gone.
 cache/
 
 # Dependencies

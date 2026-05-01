@@ -4,8 +4,7 @@
 // orchestration lives in site/js/run/bench-worker.js — same worker the
 // interactive Run page uses.
 
-import { localSource } from './js/run/source.js';
-import { OPFS_ROOT_NAME } from './js/run/source.js';
+import { ggufSource, OPFS_ROOT_NAME } from './js/run/source.js';
 import { CONSISTENCY_PROMPT } from './js/run/config.js';
 
 // Global error handlers — catch Emscripten abort() which may not throw.
@@ -90,7 +89,7 @@ window.addEventListener('unhandledrejection', (e) => {
   try {
     onStatus('downloading', `Downloading ${modelFile}...`);
     onLog(`Fetching ${hfRepo}/${modelFile} into OPFS`);
-    const r = await localSource().opfsHandleForModel(hfRepo, modelFile, onProgress);
+    const r = await ggufSource().opfsHandleForModel(hfRepo, modelFile, onProgress);
     size = r.size;
   } catch (err) {
     window.__BENCH.error = `opfsHandleForModel failed: ${err.message}`;

@@ -319,16 +319,6 @@ async function createSafariSession() {
   });
 }
 
-// Delete a cached model file to free disk space
-function deleteModelCache(variant) {
-  const cachePath = path.join(__dirname, 'cache', 'models', variant.repo, variant.filename);
-  try {
-    if (fs.existsSync(cachePath)) {
-      fs.unlinkSync(cachePath);
-    }
-  } catch {}
-}
-
 // Run a variant in a Playwright browser (chromium) with a hard-kill timeout.
 // Launches a fresh browser per variant to prevent WASM memory accumulation.
 // If the browser hangs past the soft timeout, SIGKILL ensures we don't wait forever.
@@ -433,7 +423,9 @@ async function runVariantInBrowser(browserName, variant, serverUrl, timestamp, n
   return runVariantPlaywright(browserName, variant, serverUrl, timestamp, nGpuLayers, refTokenIds, mode, nRepsOverride);
 }
 
-// Main — variant-first loop: download model → CPU baseline → all browsers GPU → delete cache
+// Main — variant-first loop: each variant downloads to OPFS in a fresh
+// browser context, runs across all browsers, then the context tears down
+// (which evicts OPFS automatically).
 async function main() {
   console.log('=== WebGPU LLM Benchmark Runner ===');
   console.log(`Browsers: ${config.BROWSERS.join(', ')}`);
@@ -442,17 +434,14 @@ async function main() {
   console.log(`GPU layers: ${config.N_GPU_LAYERS}`);
   console.log(`Perf:       -p ${config.N_PROMPT} -n ${config.N_GEN} -r ${config.N_REPS}${config.NO_WARMUP ? ' --no-warmup' : ''}`);
   if (LLAMA_CPP_COMMIT) console.log(`llama.cpp:  ${LLAMA_CPP_COMMIT.slice(0, 10)}`);
-  if (config.NO_CACHE) console.log('Cache: OFF (models will be downloaded fresh each run)');
   if (config.CONSISTENCY) console.log('Consistency mode: ON (CPU baseline + GPU per variant)');
   if (config.RESUME) console.log('Resume mode: ON (skipping already-succeeded benchmarks)');
-  console.log('Execution: variant-first (download → all browsers → delete cache)');
   console.log('');
 
   // Ensure results dir exists
   fs.mkdirSync(config.RESULTS_DIR, { recursive: true });
 
-  // Start server
-  const { server, url: serverUrl } = await startServer(config.PORT, { noCache: config.NO_CACHE });
+  const { server, url: serverUrl } = await startServer(config.PORT);
   console.log(`Server: ${serverUrl}`);
 
   // Load persisted CPU baselines (allows resuming after crash)
@@ -565,9 +554,6 @@ async function main() {
       // Save intermediate results (crash resilience)
       fs.writeFileSync(path.join(config.RESULTS_DIR, 'results.json'), JSON.stringify(allResults, null, 2));
     }
-
-    // Phase 3: Delete cached model to free disk space
-    deleteModelCache(variant);
   }
 
   // Final save (local cache for retry / inspection).

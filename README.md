@@ -22,8 +22,8 @@ node server.js
 Run-page flow:
 1. Three device cards show browser + platform + GPU, deviceMemory + WebGPU support, and the estimated safe model budget.
 2. **Models panel** lists all 194 variants grouped by family. Every variant is checked by default; variants that exceed the budget are dimmed and unchecked. Uncheck whatever you don't want to run.
-3. **`[Download selected]`** streams GGUFs through the local proxy (`cache/models/`). Per-row byte progress.
-4. **`[Run benchmarks]`** runs each cached variant through `bench-worker.js` sequentially (one Worker per run, OPFS-backed model load). A crash in one variant doesn't halt the queue.
+3. **`[Download selected]`** streams GGUFs straight from HuggingFace into the browser's OPFS cache. Per-row byte progress.
+4. **`[Run benchmarks]`** runs each cached variant through `bench-worker.js` sequentially (one Worker per run, OPFS-backed model load — `use_mmap=0`, no WASM-heap size cap). A crash in one variant doesn't halt the queue.
 5. **Output** — copy the markdown block or download JSON. When served from `localhost:3000`, a checkbox appends each record to `results/results.json` as runner.js does.
 
 ### Hosted (HF Space)
@@ -34,9 +34,9 @@ its surface and adapts:
 
 | Surface | URL | Models | Cache | Submit |
 |---|---|---|---|---|
-| Localhost | `/site/run.html` | `/api/models` (Express) | `cache/models/` on disk | `POST /api/results` → `npm run submit` |
-| HF Space | `/run.html` | `./models.json` | OPFS | HF OAuth → direct commit to the leaderboard dataset |
-| Other hosted | `/run.html` | `./models.json` | OPFS | Hidden (read-only — a banner points at the Space) |
+| Localhost | `/site/run.html` | `/api/models` (Express) | OPFS in the browser | `POST /api/results` → `npm run submit` |
+| HF Space | `/run.html` | `./models.json` | OPFS in the browser | HF OAuth → direct commit to the leaderboard dataset |
+| Other hosted | `/run.html` | `./models.json` | OPFS in the browser | Hidden (read-only — a banner points at the Space) |
 
 The `sync-to-hf-space` workflow flattens `site/` onto your Space root on every push to `main` (set the `HF_SPACE_REPO` repo variable + `HF_TOKEN` secret first). Dataset repo + OAuth scopes live in `site/js/run/config.js`.
 
@@ -151,9 +151,9 @@ node runner.js --quick --no-webgpu
 
 ### Model Download Caching
 
-Models are downloaded from HuggingFace through a local caching proxy. The first download for each model file hits HuggingFace and saves to `cache/models/`. Subsequent runs serve from disk, eliminating download overhead entirely.
+Models are fetched directly from HuggingFace into the browser's OPFS by `bench-worker.js` (the same loader the interactive Run page uses). Each Playwright context has its own OPFS, so every variant is downloaded once per `runner.js` invocation and discarded when the context closes.
 
-Cache files persist across runs. To clear the cache: `rm -rf cache/`.
+If you want a persistent on-disk cache for the CLI, point Playwright at a persistent context — see `chromium.launchPersistentContext()`. There is no longer an Express-side disk cache.
 
 ## Results
 
@@ -355,7 +355,7 @@ webgpu-bench/
   build.sh               # Builds both WASM variants
 
   harness.html/js        # Browser-side: downloads model, runs inference
-  server.js              # Express server with caching proxy + CORS
+  server.js              # Express server (static site + /api/models, /api/results) + CORS
   runner.js              # Playwright/WebDriverIO orchestrator
   config.js              # Reads models.json, parses CLI args
   models.json            # Model definitions (10 models, 230 variants)
@@ -373,10 +373,10 @@ webgpu-bench/
 ### How It Works
 
 1. `build.sh` compiles llama.cpp to WASM with WebGPU support (Emscripten + emdawnwebgpu)
-2. `runner.js` starts a local Express server with a HuggingFace caching proxy
+2. `runner.js` starts a local Express server that serves the harness page
 3. Playwright launches Chrome; WebDriverIO launches real Safari (for actual WebGPU support)
 4. Each browser navigates to `harness.html`, which detects JSPI support and loads the correct WASM variant
-5. The model is downloaded from HuggingFace (or served from cache) inside the browser
+5. The model is downloaded from HuggingFace into OPFS inside the browser; the worker reads it via a `FileSystemSyncAccessHandle` (no WASM-heap copy)
 6. Inference runs via WebGPU (or CPU fallback) using llama.cpp's C API
 7. Performance metrics from `llama_perf_context()` are exposed to the test runner via `window.__BENCH`
 8. Results are aggregated into JSON/CSV files

@@ -1,99 +1,20 @@
-// GGUF source abstraction.
-// localSource() — fetches from the local Express proxy (/models/{repo}/{file}),
-//                 caches in OPFS in the browser. Used by the CLI harness +
-//                 interactive Run page on localhost.
-// hostedSource() — fetches directly from HF, caches in OPFS. Used by the
-//                  interactive Run page on the HF Space and other hosted
-//                  surfaces.
+// GGUF source. Single implementation now — every surface fetches directly
+// from HF and caches in OPFS in the browser. The Express disk cache is
+// gone, so localhost and HF Space share the same loader.
 //
-// Both expose the same shape:
-//   isCached(repo, file)         → { cachedBytes, totalBytes? }
+// Exposes:
+//   isCached(repo, file)        → { cachedBytes, totalBytes? }
 //   opfsHandleForModel(repo, file, onProgress, signal)
-//                                → { handle, size, wasDownloaded }
-//   evictModel(repo, file)       → { ok, bytesFreed, reason? }
+//                               → { handle, size, wasDownloaded }
+//   evictModel(repo, file)      → { ok, bytesFreed, reason? }
 //
-// Additional helpers (OPFS-only): inventoryOpfs(), purgeOpfs().
-
-export function localSource() {
-  return {
-    async isCached(repo, file) {
-      try {
-        const handle = await getOpfsFileHandle(repo, file, { create: false });
-        const f = await handle.getFile();
-        return { cachedBytes: f.size, totalBytes: f.size };
-      } catch {
-        return { cachedBytes: 0 };
-      }
-    },
-
-    // Mirror of hostedSource.opfsHandleForModel — same OPFS write logic,
-    // just fetches from the local Express proxy instead of HF directly.
-    // Express still does its own disk-cache layer in commit-2 land; that
-    // disappears in commit-3 and this becomes a direct HF fetch.
-    async opfsHandleForModel(repo, file, onProgress, signal) {
-      const cached = await getOpfsFileHandle(repo, file, { create: false }).catch(() => null);
-      if (cached) {
-        const f = await cached.getFile();
-        if (f.size > 0) {
-          onProgress?.(1, f.size, f.size);
-          return { handle: cached, size: f.size, wasDownloaded: false };
-        }
-      }
-
-      const url = `/models/${repo}/${file}`;
-      const resp = await fetch(url, { signal });
-      if (!resp.ok) {
-        throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
-      }
-      const contentLength = parseInt(resp.headers.get('content-length') || '0', 10);
-
-      const handle = await getOpfsFileHandle(repo, file, { create: true });
-      const writable = await handle.createWritable({ keepExistingData: false });
-      navigator.storage?.persist?.().catch(() => {});
-
-      try {
-        const reader = resp.body.getReader();
-        let downloaded = 0;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          await writable.write(value);
-          downloaded += value.byteLength;
-          if (contentLength > 0) onProgress?.(downloaded / contentLength, downloaded, contentLength);
-        }
-        await writable.close();
-        return { handle, size: downloaded, wasDownloaded: true };
-      } catch (err) {
-        try { await writable.abort(err); } catch { /* ignore */ }
-        throw err;
-      }
-    },
-
-    async evictModel(repo, file) {
-      try {
-        const dir = await getOpfsDirFor(repo, { create: false });
-        let bytesFreed = 0;
-        try {
-          const handle = await dir.getFileHandle(file, { create: false });
-          const f = await handle.getFile();
-          bytesFreed = f.size;
-        } catch { /* not present */ }
-        await dir.removeEntry(file);
-        return { ok: true, bytesFreed };
-      } catch (err) {
-        return { ok: false, bytesFreed: 0, reason: err.message };
-      }
-    },
-  };
-}
-
-// ──────────────── hosted / OPFS ────────────────
+// Helpers: inventoryOpfs(), purgeOpfs().
 
 // Exported so bench-worker.js can re-resolve the OPFS file handle inside
-// the worker. We can't transfer FileSystemFileHandle directly across
-// postMessage on every browser (iOS Safari structured-clone is missing
-// the implementation), so instead we send the layout key (rootDir +
-// repo segments + filename) and let the worker open it itself.
+// the worker. We can't transfer FileSystemFileHandle across postMessage on
+// every browser (iOS Safari's structured-clone is missing the
+// implementation), so instead we send the layout key (rootDir + repo
+// segments + filename) and let the worker open the handle itself.
 export const OPFS_ROOT_NAME = 'models';
 
 async function getOpfsRoot() {
@@ -121,7 +42,7 @@ async function getOpfsFileHandle(repo, file, { create }) {
   return dir.getFileHandle(file, { create });
 }
 
-export function hostedSource() {
+export function ggufSource() {
   return {
     async isCached(repo, file) {
       try {
@@ -134,13 +55,12 @@ export function hostedSource() {
     },
 
     // Ensure the model is fully downloaded to OPFS, then return its
-    // FileSystemFileHandle. Used by the wllama-style OPFS-streaming load
-    // path: the worker opens a sync access handle on this FileHandle and
-    // routes MEMFS reads through it, never copying the model into the
-    // WASM heap. onProgress is called during the download leg with
-    // (fraction, downloaded, total). The returned `wasDownloaded` flag
+    // FileSystemFileHandle. The worker (bench-worker.js) opens a sync
+    // access handle on this file and routes MEMFS reads through it, so
+    // model bytes never enter the WASM heap. onProgress fires during
+    // download with (fraction, downloaded, total). `wasDownloaded`
     // distinguishes a fresh download from a cache hit so the caller can
-    // decide whether to mark the variant for post-run eviction.
+    // decide whether to evict the variant after the run.
     async opfsHandleForModel(repo, file, onProgress, signal) {
       const cached = await getOpfsFileHandle(repo, file, { create: false }).catch(() => null);
       if (cached) {
@@ -190,7 +110,6 @@ export function hostedSource() {
     async evictModel(repo, file) {
       try {
         const dir = await getOpfsDirFor(repo, { create: false });
-        // Read size first so we can report it, then remove.
         let bytesFreed = 0;
         try {
           const handle = await dir.getFileHandle(file, { create: false });
@@ -231,7 +150,7 @@ export async function inventoryOpfs() {
   return out;
 }
 
-// Delete every cached file under OPFS `models/`. Used by a [Purge] button.
+// Delete every cached file under OPFS `models/`. Used by the [Purge] button.
 export async function purgeOpfs() {
   if (!navigator.storage?.getDirectory) return;
   const root = await navigator.storage.getDirectory();
