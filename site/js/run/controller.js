@@ -135,13 +135,8 @@ async function loadModels() {
 }
 
 async function loadCacheStatus() {
-  if (state.surface === 'localhost') {
-    try {
-      const r = await fetch('/api/cache-status');
-      if (r.ok) return r.json();
-    } catch { /* no server */ }
-    return {};
-  }
+  // Cache lives in OPFS regardless of surface — both localSource and
+  // hostedSource write through the same `opfsHandleForModel` path.
   try {
     return await inventoryOpfs();
   } catch (err) {
@@ -338,7 +333,10 @@ function renderHeader() {
   if (mobileBanner) mobileBanner.hidden = !state.budget?.isMobile;
 
   const purgeBtn = $('btn-purge');
-  if (purgeBtn) purgeBtn.hidden = state.surface === 'localhost';
+  // Cache lives in OPFS on every surface now, so the Purge button is
+  // always meaningful. Was hidden on localhost back when the disk-cache
+  // path lived on the server.
+  if (purgeBtn) purgeBtn.hidden = false;
 
   renderHfSection();
 }
@@ -1001,20 +999,15 @@ async function onDownloadClick() {
     const ac = new AbortController();
     const unregister = registerAbort(() => ac.abort());
     try {
-      const { stream, contentLength } = await state.source.fetchModel(v.repo, v.filename, ac.signal);
-      const reader = stream.getReader();
-      let read = 0;
-      while (true) {
-        if (ac.signal.aborted) { try { reader.cancel(); } catch {} break; }
-        const { done, value } = await reader.read();
-        if (done) break;
-        read += value.length;
-        row.setProgress(contentLength ? read / contentLength : 0, read, contentLength);
-      }
+      const { size } = await state.source.opfsHandleForModel(
+        v.repo, v.filename,
+        (fr, downloaded, total) => row.setProgress(fr, downloaded, total),
+        ac.signal,
+      );
       if (!ac.signal.aborted) {
-        state.cacheStatus[cacheKey(v)] = { cachedBytes: read };
+        state.cacheStatus[cacheKey(v)] = { cachedBytes: size };
         refreshCacheBadge(v);
-        row.setStatus('cached', formatSize(read / (1024 * 1024)));
+        row.setStatus('cached', formatSize(size / (1024 * 1024)));
       } else {
         row.setStatus('aborted', '');
       }
@@ -1114,20 +1107,15 @@ async function onRunClick() {
     const ac = new AbortController();
     const unregister = registerAbort(() => ac.abort());
     try {
-      const { stream, contentLength } = await state.source.fetchModel(v.repo, v.filename, ac.signal);
-      const reader = stream.getReader();
-      let read = 0;
-      while (true) {
-        if (ac.signal.aborted) { try { reader.cancel(); } catch {} return; }
-        const { done, value } = await reader.read();
-        if (done) break;
-        read += value.length;
-        row.setProgress(contentLength ? read / contentLength : 0, read, contentLength);
-      }
-      state.cacheStatus[cacheKey(v)] = { cachedBytes: read };
+      const { size } = await state.source.opfsHandleForModel(
+        v.repo, v.filename,
+        (fr, downloaded, total) => row.setProgress(fr, downloaded, total),
+        ac.signal,
+      );
+      state.cacheStatus[cacheKey(v)] = { cachedBytes: size };
       state.sessionDownloads.add(cacheKey(v));
       refreshCacheBadge(v);
-      row.setStatus('cached', formatSize(read / (1024 * 1024)));
+      row.setStatus('cached', formatSize(size / (1024 * 1024)));
     } catch (err) {
       if (ac.signal.aborted) {
         row.setStatus('aborted', '');
@@ -1228,7 +1216,6 @@ async function onRunClick() {
 // The worker is terminated (and state.currentWorker cleared) when done.
 function runInWorker({
   params,
-  stream,
   opfsPath,
   onStatus,
   onProgress,
@@ -1273,119 +1260,23 @@ function runInWorker({
       finish({ status: 'error', error: 'worker message deserialization failed' });
     };
 
-    // Three transport modes — see bench-worker.js runOne() for matching shape.
-    if (opfsPath) {
-      // OPFS path: send the layout key only (rootDir + repo + filename).
-      // The worker re-resolves to a FileSystemFileHandle via
-      // navigator.storage.getDirectory() itself. Plain JSON-serializable —
-      // works on iOS Safari, where FileSystemFileHandle structured-clone
-      // is not implemented.
-      try {
-        worker.postMessage({ type: 'run', params, opfsPath });
-      } catch (err) {
-        finish({ status: 'error', error: `postMessage(opfsPath) failed: ${err.message}` });
-      }
-      return;
-    }
-
-    // Mobile browsers (esp. iOS Safari) advertise transferable streams but
-    // can't actually transfer ReadableStreams across postMessage — the call
-    // throws "The object can not be cloned." We probe once with a tiny
-    // MessageChannel handshake, then take the buffered path on devices that
-    // fail it: drain the stream into an ArrayBuffer on the main thread (still
-    // emitting progress events) and transfer the buffer instead. ArrayBuffer
-    // is universally transferable, so this works everywhere.
-    if (transferableStreamsSupported()) {
-      try {
-        worker.postMessage({ type: 'run', params, stream }, [stream]);
-      } catch (err) {
-        finish({ status: 'error', error: `postMessage failed: ${err.message}` });
-      }
-    } else {
-      onStatus?.('downloading', 'Buffering model on main thread…');
-      readStreamToBuffer(stream, params.contentLength, (fr, dl, total) => {
-        onProgress?.(fr, dl, total);
-      }).then((buffer) => {
-        if (settled) return; // worker errored mid-buffer
-        try {
-          worker.postMessage({ type: 'run', params, buffer }, [buffer]);
-        } catch (err) {
-          finish({ status: 'error', error: `buffered postMessage failed: ${err.message}` });
-        }
-      }).catch((err) => {
-        finish({ status: 'error', error: `stream buffering failed: ${err.message}` });
-      });
+    // OPFS path is the only transport. We send the layout key only
+    // (rootDir + repo + filename); the worker re-resolves to a
+    // FileSystemFileHandle via navigator.storage.getDirectory() itself,
+    // since FileSystemFileHandle structured-clone is missing on iOS Safari.
+    try {
+      worker.postMessage({ type: 'run', params, opfsPath });
+    } catch (err) {
+      finish({ status: 'error', error: `postMessage(opfsPath) failed: ${err.message}` });
     }
   });
 }
 
-/* Feature-test transferable ReadableStream once. The cheapest reliable
-   probe is a MessageChannel postMessage with the stream as a transferable —
-   if the runtime can't transfer it the call throws synchronously. */
-function transferableStreamsSupported() {
-  if (transferableStreamsSupported.cached !== undefined) {
-    return transferableStreamsSupported.cached;
-  }
-  let result = false;
-  try {
-    const probeStream = new ReadableStream();
-    const channel = new MessageChannel();
-    channel.port1.postMessage(probeStream, [probeStream]);
-    channel.port1.close();
-    channel.port2.close();
-    result = true;
-  } catch {
-    result = false;
-  }
-  transferableStreamsSupported.cached = result;
-  return result;
-}
-
-/* Drain a ReadableStream<Uint8Array> into one contiguous ArrayBuffer,
-   emitting progress callbacks per chunk. Used by the mobile fallback when
-   transferable streams aren't available. */
-async function readStreamToBuffer(stream, contentLength, onProgress) {
-  const reader = stream.getReader();
-  const chunks = [];
-  let downloaded = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      downloaded += value.length;
-      const fraction = contentLength > 0 ? downloaded / contentLength : 0;
-      onProgress?.(fraction, downloaded, contentLength);
-    }
-  } finally {
-    try { reader.releaseLock(); } catch { /* noop */ }
-  }
-  // Concatenate into one buffer the worker can write into the WASM heap.
-  const total = downloaded;
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return out.buffer;
-}
-
-// Fetch the model and hand it to a freshly-spawned worker. Returns a record
-// shaped like runBenchmarkCore(). Two paths:
-//
-//   wllama-style OPFS streaming (preferred): if the source provides
-//   opfsHandleForModel (currently hostedSource), download to OPFS on the
-//   main thread, then transfer the FileSystemFileHandle to the worker.
-//   The worker opens a sync access handle and routes MEMFS reads through
-//   it, never copying the model into the WASM heap. Supports >2GB.
-//
-//   Heap-stream (fallback for localSource): keep the prior behavior —
-//   stream the GGUF into a single _malloc'd buffer in the WASM heap.
-//   Faster for small models (zero-copy mmap on load), capped at ~2GB.
+// Download to OPFS on the main thread, then hand the OPFS layout key to a
+// freshly-spawned worker. The worker opens a FileSystemSyncAccessHandle
+// and routes MEMFS reads through it (use_mmap=0), never copying the model
+// into the WASM heap. Supports models larger than the WASM heap budget.
 async function runBenchmarkInWorker(v, params, callbacks) {
-  const useOpfs = typeof state.source.opfsHandleForModel === 'function';
-
   const baseParams = {
     buildType: 'Suspending' in WebAssembly ? 'jspi' : 'asyncify',
     // Model load
@@ -1402,70 +1293,41 @@ async function runBenchmarkInWorker(v, params, callbacks) {
     noWarmup: !!params.noWarmup,
   };
 
-  if (useOpfs) {
-    let contentLength;
-    const ac = new AbortController();
-    const unregister = registerAbort(() => ac.abort());
-    try {
-      callbacks.onStatus?.('downloading', 'Downloading model to OPFS...');
-      const r = await state.source.opfsHandleForModel(
-        v.repo, v.filename,
-        callbacks.onProgress,
-        ac.signal,
-      );
-      contentLength = r.size;
-      // When the prefetch is skipped (mobile path), the inline download
-      // above is the variant's first arrival in OPFS. Mark it as
-      // session-downloaded so the post-run eviction logic frees it before
-      // the next variant starts — keeping disk usage flat.
-      if (r.wasDownloaded) {
-        state.sessionDownloads.add(cacheKey(v));
-        state.cacheStatus[cacheKey(v)] = { cachedBytes: r.size };
-        refreshCacheBadge(v);
-      }
-    } catch (err) {
-      if (ac.signal.aborted) {
-        return { status: 'aborted', error: 'aborted by user' };
-      }
-      return { status: 'error', error: `opfsHandleForModel failed: ${err.message}` };
-    } finally {
-      unregister();
-    }
-    if (state.aborted) {
-      return { status: 'aborted', error: 'aborted by user' };
-    }
-    // Pass the OPFS path components, not the FileHandle. iOS Safari
-    // (and some older Chromium/Firefox versions) can't structured-clone
-    // FileSystemFileHandle across postMessage. The worker re-resolves the
-    // handle via navigator.storage.getDirectory() itself, which works
-    // everywhere OPFS is supported.
-    return runInWorker({
-      params: { ...baseParams, contentLength },
-      opfsPath: { rootDir: OPFS_ROOT_NAME, repo: v.repo, filename: v.filename },
-      onStatus: callbacks.onStatus,
-      onProgress: callbacks.onProgress,
-      onLog: callbacks.onLog,
-    });
-  }
-
-  let fetched;
   const ac = new AbortController();
   const unregister = registerAbort(() => ac.abort());
   try {
-    fetched = await state.source.fetchModel(v.repo, v.filename, ac.signal);
+    callbacks.onStatus?.('downloading', 'Downloading model to OPFS...');
+    const r = await state.source.opfsHandleForModel(
+      v.repo, v.filename,
+      callbacks.onProgress,
+      ac.signal,
+    );
+    // When the prefetch is skipped (mobile path), the inline download
+    // above is the variant's first arrival in OPFS. Mark it as
+    // session-downloaded so the post-run eviction logic frees it before
+    // the next variant starts — keeping disk usage flat.
+    if (r.wasDownloaded) {
+      state.sessionDownloads.add(cacheKey(v));
+      state.cacheStatus[cacheKey(v)] = { cachedBytes: r.size };
+      refreshCacheBadge(v);
+    }
   } catch (err) {
+    if (ac.signal.aborted) {
+      return { status: 'aborted', error: 'aborted by user' };
+    }
+    return { status: 'error', error: `opfsHandleForModel failed: ${err.message}` };
+  } finally {
     unregister();
-    if (ac.signal.aborted) return { status: 'aborted', error: 'aborted by user' };
-    return { status: 'error', error: `fetchModel failed: ${err.message}` };
   }
-  unregister();
   if (state.aborted) {
     return { status: 'aborted', error: 'aborted by user' };
   }
-
+  // Pass the OPFS layout key (rootDir + repo + filename), not a
+  // FileSystemFileHandle. iOS Safari can't structured-clone FileHandles,
+  // so the worker re-resolves it locally via navigator.storage.getDirectory().
   return runInWorker({
-    params: { ...baseParams, contentLength: fetched.contentLength },
-    stream: fetched.stream,
+    params: baseParams,
+    opfsPath: { rootDir: OPFS_ROOT_NAME, repo: v.repo, filename: v.filename },
     onStatus: callbacks.onStatus,
     onProgress: callbacks.onProgress,
     onLog: callbacks.onLog,
@@ -1849,7 +1711,6 @@ function wirePurgeHandler() {
   const btn = $('btn-purge');
   if (!btn) return;
   btn.addEventListener('click', async () => {
-    if (state.surface === 'localhost') return;
     if (!confirm('Delete all cached GGUF files from OPFS? This frees browser storage but re-downloads will be needed.')) return;
     try {
       await purgeOpfs();

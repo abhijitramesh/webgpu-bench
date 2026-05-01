@@ -1,52 +1,85 @@
 // GGUF source abstraction.
-// localSource() — reads through the local Express proxy (/models/{repo}/{file}),
-//                 server handles disk cache at cache/models/**.
-// hostedSource() — caches in OPFS, fetches directly from HF on miss.
+// localSource() — fetches from the local Express proxy (/models/{repo}/{file}),
+//                 caches in OPFS in the browser. Used by the CLI harness +
+//                 interactive Run page on localhost.
+// hostedSource() — fetches directly from HF, caches in OPFS. Used by the
+//                  interactive Run page on the HF Space and other hosted
+//                  surfaces.
 //
-// Both expose:
-//   isCached(repo, file) → Promise<{ cachedBytes: number, totalBytes?: number }>
-//   fetchModel(repo, file) → Promise<{ stream: ReadableStream<Uint8Array>,
-//                                      contentLength: number,
-//                                      source: string }>
+// Both expose the same shape:
+//   isCached(repo, file)         → { cachedBytes, totalBytes? }
+//   opfsHandleForModel(repo, file, onProgress, signal)
+//                                → { handle, size, wasDownloaded }
+//   evictModel(repo, file)       → { ok, bytesFreed, reason? }
 //
-// Additional hosted helpers:
-//   inventoryOpfs() → Promise<{ 'repo/file': { cachedBytes } }>
-//   purgeOpfs() → Promise<void>
+// Additional helpers (OPFS-only): inventoryOpfs(), purgeOpfs().
 
 export function localSource() {
   return {
     async isCached(repo, file) {
       try {
-        const url = `/api/cache-status?path=${encodeURIComponent(`${repo}/${file}`)}`;
-        const r = await fetch(url);
-        if (!r.ok) return { cachedBytes: 0 };
-        return await r.json();
+        const handle = await getOpfsFileHandle(repo, file, { create: false });
+        const f = await handle.getFile();
+        return { cachedBytes: f.size, totalBytes: f.size };
       } catch {
         return { cachedBytes: 0 };
       }
     },
 
-    async fetchModel(repo, file) {
+    // Mirror of hostedSource.opfsHandleForModel — same OPFS write logic,
+    // just fetches from the local Express proxy instead of HF directly.
+    // Express still does its own disk-cache layer in commit-2 land; that
+    // disappears in commit-3 and this becomes a direct HF fetch.
+    async opfsHandleForModel(repo, file, onProgress, signal) {
+      const cached = await getOpfsFileHandle(repo, file, { create: false }).catch(() => null);
+      if (cached) {
+        const f = await cached.getFile();
+        if (f.size > 0) {
+          onProgress?.(1, f.size, f.size);
+          return { handle: cached, size: f.size, wasDownloaded: false };
+        }
+      }
+
       const url = `/models/${repo}/${file}`;
-      const resp = await fetch(url);
+      const resp = await fetch(url, { signal });
       if (!resp.ok) {
         throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
       }
       const contentLength = parseInt(resp.headers.get('content-length') || '0', 10);
-      return {
-        stream: resp.body,
-        contentLength,
-        source: 'localProxy',
-      };
+
+      const handle = await getOpfsFileHandle(repo, file, { create: true });
+      const writable = await handle.createWritable({ keepExistingData: false });
+      navigator.storage?.persist?.().catch(() => {});
+
+      try {
+        const reader = resp.body.getReader();
+        let downloaded = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writable.write(value);
+          downloaded += value.byteLength;
+          if (contentLength > 0) onProgress?.(downloaded / contentLength, downloaded, contentLength);
+        }
+        await writable.close();
+        return { handle, size: downloaded, wasDownloaded: true };
+      } catch (err) {
+        try { await writable.abort(err); } catch { /* ignore */ }
+        throw err;
+      }
     },
 
     async evictModel(repo, file) {
       try {
-        const r = await fetch(`/api/cache/${repo}/${file}`, { method: 'DELETE' });
-        if (r.status === 404) return { ok: false, bytesFreed: 0, reason: 'not cached' };
-        if (!r.ok) return { ok: false, bytesFreed: 0, reason: `${r.status} ${r.statusText}` };
-        const body = await r.json().catch(() => ({}));
-        return { ok: true, bytesFreed: body.bytesFreed || 0 };
+        const dir = await getOpfsDirFor(repo, { create: false });
+        let bytesFreed = 0;
+        try {
+          const handle = await dir.getFileHandle(file, { create: false });
+          const f = await handle.getFile();
+          bytesFreed = f.size;
+        } catch { /* not present */ }
+        await dir.removeEntry(file);
+        return { ok: true, bytesFreed };
       } catch (err) {
         return { ok: false, bytesFreed: 0, reason: err.message };
       }
@@ -131,7 +164,9 @@ export function hostedSource() {
       const handle = await getOpfsFileHandle(repo, file, { create: true });
       const writable = await handle.createWritable({ keepExistingData: false });
 
-      // Same persistent-storage hint as fetchModel — best-effort.
+      // Opportunistically request persistent storage so eviction is less
+      // likely once we commit to pulling large files. Best-effort — ignore
+      // rejection (some browsers only grant on user gesture).
       navigator.storage?.persist?.().catch(() => {});
 
       try {
@@ -150,51 +185,6 @@ export function hostedSource() {
         try { await writable.abort(err); } catch { /* ignore */ }
         throw err;
       }
-    },
-
-    async fetchModel(repo, file, signal) {
-      // Cache hit → stream the OPFS file straight out.
-      try {
-        const handle = await getOpfsFileHandle(repo, file, { create: false });
-        const f = await handle.getFile();
-        if (f.size > 0) {
-          return {
-            stream: f.stream(),
-            contentLength: f.size,
-            source: 'opfs',
-          };
-        }
-      } catch { /* miss — fall through */ }
-
-      // Miss: fetch from HF, tee to OPFS + caller. signal lets the caller
-      // abort the network request; the tee'd reader inherits the abort.
-      const url = `https://huggingface.co/${repo}/resolve/main/${file}`;
-      const resp = await fetch(url, { signal });
-      if (!resp.ok) {
-        throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
-      }
-      const contentLength = parseInt(resp.headers.get('content-length') || '0', 10);
-
-      const handle = await getOpfsFileHandle(repo, file, { create: true });
-      const writable = await handle.createWritable({ keepExistingData: false });
-
-      const [toCache, toCaller] = resp.body.tee();
-
-      // Opportunistically request persistent storage so eviction is less
-      // likely once we commit to pulling large files. Best-effort — ignore
-      // rejection (some browsers only grant on user gesture).
-      navigator.storage?.persist?.().catch(() => {});
-
-      // Pipe to OPFS in the background; log but don't block the caller.
-      toCache.pipeTo(writable).catch(err => {
-        console.warn(`OPFS write failed for ${repo}/${file}: ${err.message}`);
-      });
-
-      return {
-        stream: toCaller,
-        contentLength,
-        source: 'hf-direct',
-      };
     },
 
     async evictModel(repo, file) {

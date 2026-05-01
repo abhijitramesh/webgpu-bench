@@ -23,7 +23,7 @@ Run-page flow:
 1. Three device cards show browser + platform + GPU, deviceMemory + WebGPU support, and the estimated safe model budget.
 2. **Models panel** lists all 194 variants grouped by family. Every variant is checked by default; variants that exceed the budget are dimmed and unchecked. Uncheck whatever you don't want to run.
 3. **`[Download selected]`** streams GGUFs through the local proxy (`cache/models/`). Per-row byte progress.
-4. **`[Run benchmarks]`** runs each cached variant through `runBenchmarkCore()` sequentially. A crash in one variant doesn't halt the queue.
+4. **`[Run benchmarks]`** runs each cached variant through `bench-worker.js` sequentially (one Worker per run, OPFS-backed model load). A crash in one variant doesn't halt the queue.
 5. **Output** — copy the markdown block or download JSON. When served from `localhost:3000`, a checkbox appends each record to `results/results.json` as runner.js does.
 
 ### Hosted (HF Space)

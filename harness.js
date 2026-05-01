@@ -1,9 +1,11 @@
-// Thin adapter: reads URL params, calls runBenchmarkCore(), writes to
-// window.__BENCH so runner.js (Playwright) can poll. Inference logic lives
-// in site/js/run/core.js, shared with the interactive Run-tab controller.
+// Thin adapter for runner.js (Playwright). Reads URL params, downloads the
+// model into OPFS, hands it to bench-worker.js, and forwards the worker's
+// progress/result onto window.__BENCH so the runner can poll. Inference
+// orchestration lives in site/js/run/bench-worker.js — same worker the
+// interactive Run page uses.
 
-import { runBenchmarkCore } from './js/run/core.js';
 import { localSource } from './js/run/source.js';
+import { OPFS_ROOT_NAME } from './js/run/source.js';
 import { CONSISTENCY_PROMPT } from './js/run/config.js';
 
 // Global error handlers — catch Emscripten abort() which may not throw.
@@ -40,12 +42,13 @@ window.addEventListener('unhandledrejection', (e) => {
   const runPerf             = mode !== 'consistency';
 
   const hasJspi = 'Suspending' in WebAssembly;
+  const buildType = hasJspi ? 'jspi' : 'asyncify';
 
   window.__BENCH = {
     status: 'init',
     error: null,
     modelFile,
-    buildType: hasJspi ? 'jspi' : 'asyncify',
+    buildType,
     webgpuAvailable: !!navigator.gpu,
     gpuAdapterInfo: null,
     downloadProgress: 0,
@@ -81,19 +84,76 @@ window.addEventListener('unhandledrejection', (e) => {
     }
   }
 
-  const result = await runBenchmarkCore({
-    source: localSource(),
-    modelFile, hfRepo,
-    consistencyPrompt, consistencyNPredict, refTokenIds,
-    runConsistency,
-    nPrompt: runPerf ? nPrompt : 0,
-    nGen:    runPerf ? nGen    : 0,
-    nReps,
-    nCtx, nGpuLayers,
-    onStatus, onProgress, onLog,
+  // Stage 1: download into OPFS on the main thread (sync access handles
+  // are worker-only, but the downloading half runs fine here).
+  let size;
+  try {
+    onStatus('downloading', `Downloading ${modelFile}...`);
+    onLog(`Fetching ${hfRepo}/${modelFile} into OPFS`);
+    const r = await localSource().opfsHandleForModel(hfRepo, modelFile, onProgress);
+    size = r.size;
+  } catch (err) {
+    window.__BENCH.error = `opfsHandleForModel failed: ${err.message}`;
+    window.__BENCH.status = 'error';
+    onStatus('error', window.__BENCH.error);
+    onLog(`ERROR: ${window.__BENCH.error}`);
+    return;
+  }
+
+  // Stage 2: hand the OPFS layout key to the worker. The worker re-resolves
+  // the FileHandle locally (FileHandles don't structured-clone reliably on
+  // iOS Safari) and opens a sync access handle inside its own thread.
+  const result = await new Promise((resolve) => {
+    let worker;
+    try {
+      worker = new Worker(new URL('./js/run/bench-worker.js', import.meta.url));
+    } catch (err) {
+      resolve({ status: 'error', error: `worker construct failed: ${err.message}` });
+      return;
+    }
+
+    let settled = false;
+    const finish = (record) => {
+      if (settled) return;
+      settled = true;
+      try { worker.terminate(); } catch { /* noop */ }
+      resolve(record);
+    };
+
+    worker.onmessage = (e) => {
+      const msg = e.data || {};
+      if (msg.type === 'status') onStatus(msg.status, msg.msg);
+      else if (msg.type === 'progress') onProgress(msg.fraction, msg.downloaded, msg.total);
+      else if (msg.type === 'log') onLog(msg.line);
+      else if (msg.type === 'result') finish(msg.record);
+    };
+    worker.onerror = (err) => {
+      finish({ status: 'error', error: err?.message || 'worker error' });
+    };
+    worker.onmessageerror = () => {
+      finish({ status: 'error', error: 'worker message deserialization failed' });
+    };
+
+    worker.postMessage({
+      type: 'run',
+      params: {
+        buildType,
+        nCtx,
+        nGpuLayers,
+        consistencyPrompt: runConsistency ? consistencyPrompt : '',
+        consistencyNPredict,
+        refTokenIds,
+        nPrompt: runPerf ? nPrompt : 0,
+        nGen:    runPerf ? nGen    : 0,
+        nReps,
+        noWarmup: false,
+      },
+      opfsPath: { rootDir: OPFS_ROOT_NAME, repo: hfRepo, filename: modelFile },
+    });
   });
 
-  // Merge core result fields into window.__BENCH. The downloadProgress we wrote
-  // during the run is preserved (result has no `downloadProgress` field).
+  // Merge worker result into window.__BENCH. downloadProgress was set
+  // during stage 1 and is preserved.
   Object.assign(window.__BENCH, result);
+  window.__BENCH._opfsSize = size;
 })();

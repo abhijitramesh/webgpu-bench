@@ -1,5 +1,5 @@
 // Dedicated Worker that runs a single llama.cpp inference pass. Loaded by
-// controller.js with { type: 'classic' } so we can importScripts() the
+// controller.js and harness.js so we can importScripts() the
 // Emscripten-emitted bench.js (which is a classic, non-module script).
 //
 // Protocol (all messages use { type, ... } tag):
@@ -7,7 +7,7 @@
 //   main → worker: {
 //     type: 'run',
 //     params: {
-//       buildType, contentLength,
+//       buildType,
 //       // model load
 //       nCtx, nGpuLayers,
 //       // consistency phase (set consistencyPrompt to '' to skip)
@@ -15,8 +15,7 @@
 //       // perf phase
 //       nPrompt, nGen, nReps, noWarmup,
 //     },
-//     stream?: ReadableStream<Uint8Array>,  // TRANSFERRED
-//     buffer?: ArrayBuffer                  // TRANSFERRED (mobile fallback)
+//     opfsPath: { rootDir, repo, filename }
 //   }
 //
 //   worker → main: { type: 'status', status, msg }
@@ -27,11 +26,6 @@
 // Abort: main thread calls worker.terminate(). No cooperative abort — JSPI
 // decode loops ignore signals, and termination is the only reliable way to
 // stop an in-flight WASM call.
-//
-// NOTE ON DUPLICATION: the orchestration below mirrors runBenchmarkCore() +
-// runBenchActions() in site/js/run/core.js. core.js stays the authoritative
-// main-thread path (used by harness.js + runner.js Playwright harness). When
-// changing one, change the other.
 
 const post = (msg) => self.postMessage(msg);
 const log = (line) => post({ type: 'log', line });
@@ -227,10 +221,9 @@ self.onmessage = async (e) => {
   }
 };
 
-async function runOne({ params, stream, buffer, opfsPath }) {
+async function runOne({ params, opfsPath }) {
   const {
     buildType,
-    contentLength,
     nCtx,
     nGpuLayers,
     // consistency
@@ -243,17 +236,13 @@ async function runOne({ params, stream, buffer, opfsPath }) {
     nReps,
     noWarmup,
   } = params;
-  // Three input modes are supported:
-  //   opfsPath    → wllama-style OPFS-streaming load (preferred for >2GB).
-  //                  Resolved to a FileSystemFileHandle inside the worker
-  //                  via navigator.storage.getDirectory() — FileHandles
-  //                  themselves don't structured-clone reliably (iOS Safari).
-  //   stream      → heap-stream mode (zero-copy WASM-heap, transferable)
-  //   buffer      → buffered fallback for browsers without transferable streams
-  // Exactly one must be provided.
-  const inputCount = (opfsPath ? 1 : 0) + (stream ? 1 : 0) + (buffer ? 1 : 0);
-  if (inputCount !== 1) {
-    throw new Error('runOne: exactly one of `opfsPath`, `stream`, or `buffer` must be provided');
+  // The worker only loads via OPFS now: main thread downloads to OPFS,
+  // we open a FileSystemSyncAccessHandle here, and patched MEMFS
+  // stream_ops route llama.cpp's fread through the sync handle. That
+  // path scales past the WASM heap budget and shares one numerical
+  // implementation across every surface.
+  if (!opfsPath) {
+    throw new Error('runOne: opfsPath is required (heap/buffer paths removed)');
   }
 
   const result = {
@@ -315,76 +304,18 @@ async function runOne({ params, stream, buffer, opfsPath }) {
   log('WASM module loaded');
 
   // ─── Make the model visible to the WASM filesystem ───
-  // Two paths:
-  //   useOpfsPath: leave the bytes on disk (OPFS) and route reads through
-  //               a sync access handle via patched MEMFS stream_ops. No
-  //               heap copy, supports >2GB.
-  //   else:       _malloc the full file on the WASM heap, write the stream
-  //               in, register a heap-backed MEMFS file. Faster (mmap'd
-  //               zero-copy at load time) but caps at ~2GB.
-  let modelPtr = 0;  // tracks heap-path allocation for cleanup
-  const useOpfsPath = !!opfsPath;
-
-  if (useOpfsPath) {
-    status('opfs', 'Linking OPFS-backed model into MEMFS...');
-    const fileHandle = await resolveOpfsHandle(opfsPath);
-    patchMEMFS(Module);
-    const size = await opfsAlloc(Module, 'model.gguf', fileHandle);
-    log(`OPFS-backed model.gguf registered (${(size / (1024 * 1024)).toFixed(1)} MB)`);
-    // Report 100% to keep the existing progress UI happy — the actual
-    // download to OPFS happened before the worker spawn.
-    post({ type: 'progress', fraction: 1, downloaded: size, total: size });
-  } else {
-    if (!(contentLength > 0)) {
-      throw new Error('content-length is required for streaming into WASM heap');
-    }
-    status('downloading', 'Streaming model into WASM heap...');
-
-    modelPtr = Module._malloc(contentLength);
-    if (!modelPtr) {
-      throw new Error(
-        `_malloc(${(contentLength / (1024 * 1024)).toFixed(0)} MB) failed — wasm heap exhausted`
-      );
-    }
-
-    try {
-      let downloaded = 0;
-      if (stream) {
-        const reader = stream.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          Module.HEAPU8.set(value, modelPtr + downloaded);
-          downloaded += value.length;
-          post({ type: 'progress', fraction: downloaded / contentLength, downloaded, total: contentLength });
-        }
-      } else {
-        const view = new Uint8Array(buffer);
-        if (view.byteLength !== contentLength) {
-          log(`warning: buffer size ${view.byteLength} != content-length ${contentLength}`);
-        }
-        Module.HEAPU8.set(view, modelPtr);
-        downloaded = view.byteLength;
-        post({ type: 'progress', fraction: 1, downloaded, total: contentLength });
-      }
-      log(`Model written to WASM heap @ 0x${modelPtr.toString(16)} (${(downloaded / (1024 * 1024)).toFixed(1)} MB)`);
-
-      const view = new Uint8Array(Module.HEAPU8.buffer, modelPtr, contentLength);
-      Module.FS.createDataFile('/', 'model.gguf', view, true, false, true);
-
-      const node = Module.FS.lookupPath('/model.gguf').node;
-      Object.defineProperty(node, 'contents', {
-        get: () => new Uint8Array(Module.HEAPU8.buffer, modelPtr, contentLength),
-        set: () => { /* read-only file */ },
-        configurable: true,
-      });
-      node.usedBytes = contentLength;
-    } catch (err) {
-      Module._free(modelPtr);
-      modelPtr = 0;
-      throw err;
-    }
-  }
+  // Open a FileSystemSyncAccessHandle on the OPFS file, register a
+  // zero-byte placeholder in MEMFS, and patch MEMFS stream_ops so
+  // llama.cpp's fread is routed to the sync handle. Bytes never touch
+  // the WASM heap, so the model size is bounded by OPFS quota, not heap.
+  status('opfs', 'Linking OPFS-backed model into MEMFS...');
+  const fileHandle = await resolveOpfsHandle(opfsPath);
+  patchMEMFS(Module);
+  const size = await opfsAlloc(Module, 'model.gguf', fileHandle);
+  log(`OPFS-backed model.gguf registered (${(size / (1024 * 1024)).toFixed(1)} MB)`);
+  // Report 100% to keep the existing progress UI happy — the actual
+  // download to OPFS happened before the worker spawn.
+  post({ type: 'progress', fraction: 1, downloaded: size, total: size });
 
   // ─── Init backend ───
   status('initializing', 'Initializing llama.cpp backends...');
@@ -393,31 +324,19 @@ async function runOne({ params, stream, buffer, opfsPath }) {
   log('Backends initialized');
 
   // ─── Load model ───
-  // OPFS path requires use_mmap=0 — the patched mmap throws to surface bugs
-  // if it's accidentally invoked. Heap path uses mmap=1 to take MEMFS's
-  // zero-copy mmap fast path against our HEAPU8-backed file.
-  const useMmap = useOpfsPath ? 0 : 1;
-  status('loading_model', `Loading model (ctx=${nCtx}, gpu_layers=${nGpuLayers}, mmap=${useMmap})...`);
+  // use_mmap=0 — the patched MEMFS mmap throws explicitly, so any
+  // accidental mmap attempt surfaces as a clear error rather than a
+  // silent heap copy.
+  status('loading_model', `Loading model (ctx=${nCtx}, gpu_layers=${nGpuLayers}, mmap=0)...`);
   const loadResult = await Module.ccall(
     'bench_load',
     'number',
     ['string', 'number', 'number', 'number'],
-    ['/model.gguf', nCtx, nGpuLayers, useMmap],
+    ['/model.gguf', nCtx, nGpuLayers, 0],
     { async: true },
   );
   if (loadResult !== 0) throw new Error(`bench_load failed: ${loadResult}`);
   log('Model loaded');
-
-  if (!useOpfsPath) {
-    // Heap path: drop the MEMFS node now that llama.cpp's mmap captured a
-    // pointer into our _malloc'd region. Bytes stay alive in the heap until
-    // bench_exit + _free.
-    try {
-      Module.FS.unlink('/model.gguf');
-    } catch (err) {
-      log(`Warning: could not remove model FS node: ${err.message}`);
-    }
-  }
 
   // ─── Consistency phase ───
   // Soft-fail: a failure here logs and falls through to the perf phase
@@ -541,14 +460,9 @@ async function runOne({ params, stream, buffer, opfsPath }) {
 
   await Module.ccall('bench_exit', null, [], [], { async: true });
 
-  if (useOpfsPath) {
-    // Close the sync handle so OPFS can release its lock on the file (and
-    // so a subsequent run can open a fresh handle without colliding).
-    opfsFreeAll(Module);
-  } else if (modelPtr) {
-    Module._free(modelPtr);
-    modelPtr = 0;
-  }
+  // Close the sync handle so OPFS can release its lock on the file (and
+  // so a subsequent run can open a fresh handle without colliding).
+  opfsFreeAll(Module);
 
   result.status = 'done';
   const summary = result.metrics?.tests
