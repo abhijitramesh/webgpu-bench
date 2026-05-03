@@ -62,58 +62,27 @@ const ANDROID_HEAP_BUDGET_MB = 800;
 
 // GPU budgets = available GPU-buffer capacity for model weights + KV
 // mirror, sized below the Jetsam tab ceiling minus working-set headroom.
-// These are *fallback* values. On mobile we run a bounded GPU probe
-// (capped well below the Jetsam ceiling, with yields between steps) and
-// only fall back to the static value when the probe trips, returns less
-// than the static floor, or maxBufferSize is too small to bother.
+// Static per-family numbers — we don't probe on mobile because the
+// probe's allocation pulse itself triggers Jetsam on lower-RAM devices,
+// and WebKit doesn't expose a signal that distinguishes (e.g.) iPhone 13
+// from iPhone 17 Pro Max (same maxBufferSize 1024 MB on both, same
+// deviceMemory clamp). See "mobile probe" history in git: bounded
+// probe shipped, then disabled because the iPhone 13 / mid-RAM iPad
+// classes still Jetsamed during or right after the probe pulse.
 //
 // iPhone: empirical — 1200 MB caused tab reloads on first variant of a
 // Run study (Llama-3.2-1B Q2_K, 554 MB) on iPhone 17 Pro Max. 700 MB
 // keeps Llama-1B variants out of variantFits while still allowing the
-// 250–500 MB tier (gemma-3-270m Q8, Qwen3-0.6B Q4, etc.) — the band
-// that was missing under the old 450 MB shared cap.
+// 250–500 MB tier (gemma-3-270m Q8, Qwen3-0.6B Q4, etc.).
+//
+// iPad: empirical — 2500 MB Jetsamed on Llama-3.2-1B (likely Q4_K_M
+// = 770 MB or Q8_0 = 1259 MB). 1500 MB excludes Llama-1B Q8_0 (1459 MB
+// after overhead) but allows Q4_K_M (970 MB), keeping the standard
+// study quant runnable. High-end iPad Pro M-class probably tolerates
+// more, but we have no way to detect device class.
 const IPHONE_GPU_BUDGET_MB  = 700;
-const IPAD_GPU_BUDGET_MB    = 2500;
+const IPAD_GPU_BUDGET_MB    = 1500;
 const ANDROID_GPU_BUDGET_MB = 1500;
-
-// Bounded mobile GPU probe — small steps + yields keep allocation rate
-// below the spike threshold that triggers Jetsam, and a tier-based hard
-// cap keeps the probe ceiling well below the device's known crash point.
-const MOBILE_PROBE_STEP_MB = 128;
-const MOBILE_PROBE_TIMEOUT_MS = 10_000;
-const MOBILE_PROBE_YIELD_MS = 50;
-const MOBILE_PROBE_SAFETY_MARGIN_MB = 150;
-
-// SessionStorage sentinel: written before the probe, cleared after. If
-// we see it on the next page load, the previous probe crashed the tab —
-// skip probing and use the static fallback so we don't loop forever
-// with the user staring at a tab that keeps reloading. Cleared at end
-// of probe so subsequent loads in the same session re-probe normally.
-const MOBILE_PROBE_SENTINEL_KEY = 'webgpu-bench:mobile-gpu-probe-in-progress';
-
-// Probe ceiling per family × maxBufferSize tier. Caps are deliberately
-// conservative — a probe that completes successfully gives `cap - margin`,
-// while a probe that OOMs partway gives `probed - margin`. We never
-// exceed `cap`, so even a successful probe sits below the empirical
-// crash point on the worst-case device we've seen for that tier.
-function getMobileProbeCapMB(family, maxBufferSizeMB) {
-  if (family === 'iphone') {
-    if (maxBufferSizeMB >= 900) return 1000;
-    if (maxBufferSizeMB >= 500) return 800;
-    return 400;
-  }
-  if (family === 'ipad') {
-    if (maxBufferSizeMB >= 900) return 3000;
-    if (maxBufferSizeMB >= 500) return 1800;
-    return 1000;
-  }
-  if (family === 'android') {
-    if (maxBufferSizeMB >= 900) return 2000;
-    if (maxBufferSizeMB >= 500) return 1500;
-    return 800;
-  }
-  return 700;
-}
 
 function detectMobileFamily() {
   if (typeof navigator === 'undefined') return null;
@@ -319,25 +288,31 @@ async function _computeBudget() {
   const mobileFamily = detectMobileFamily();
   const isMobile = mobileFamily !== null;
 
-  // ── Mobile path: static heap budget, bounded GPU probe ──
+  // ── Mobile path: pure static budgets ──
   //
-  // Heap stays static — the heap probe itself can trip Jetsam (commit
-  // 6f33b5d), and the working-set floor matters more than a precise
-  // number anyway.
+  // No probes on mobile. Both the heap probe and the GPU probe have been
+  // shown to themselves trigger Jetsam:
+  //   - Heap probe: commit 6f33b5d (terminated worker).
+  //   - GPU probe (unbounded): commit 4f567a5.
+  //   - GPU probe (bounded): the 1000 MB peak allocation pulse on
+  //     iPhone 13 / mid-RAM iPad classes still pushed the WebContent
+  //     process over the Jetsam threshold during or right after the
+  //     probe — even though the probe itself completed cleanly,
+  //     subsequent OPFS writes hit "unknown transient" errors and the
+  //     next inference allocation tipped the tab over.
   //
-  // GPU runs a *bounded* probe: we read maxBufferSize from the adapter
-  // (free, no allocation), pick a per-tier hard cap from
-  // getMobileProbeCapMB, then probe with small 128 MB steps and 50 ms
-  // yields up to that cap. This gives us a real measurement on capable
-  // devices (e.g. iPhone 17 Pro Max gets ~850 MB instead of the 700 MB
-  // static fallback) without risking the unbounded behavior that tripped
-  // Jetsam in commit 4f567a5. If the probe OOMs partway, we use
-  // `probed - margin`. If it returns less than the static fallback or
-  // fails entirely, we use the static fallback.
+  // We can't distinguish iPhone 13 (6 GB) from iPhone 17 Pro Max (12 GB)
+  // via WebGPU adapter info or navigator.deviceMemory, so we err on the
+  // side of the lower-RAM device. The budgets are tuned to admit the
+  // 250–500 MB tier (gemma-3-270m, Qwen3-0.6B, LFM2.5-350M) and to
+  // exclude variants that empirically caused crashes on the smallest
+  // device in each family. We still surface adapter.limits.maxBufferSize
+  // in the source string for diagnostics.
   if (isMobile) {
-    const { heap: heapBudgetMB, gpu: staticGpuBudgetMB } = getMobileBudgetMB(mobileFamily);
+    const { heap: heapBudgetMB, gpu: gpuBudgetMB } = getMobileBudgetMB(mobileFamily);
 
-    // Read adapter limits without allocating a device buffer.
+    // Read adapter limits without allocating a device buffer — purely
+    // informational for the device card / log line.
     let maxBufferSizeMB = 0;
     let adapterReadError = null;
     try {
@@ -354,67 +329,10 @@ async function _computeBudget() {
       adapterReadError = err.message;
     }
 
-    const probeCap = getMobileProbeCapMB(mobileFamily, maxBufferSizeMB);
-    const probeBestCase = probeCap - MOBILE_PROBE_SAFETY_MARGIN_MB;
-
-    // Skip the probe if even a successful run can't beat the static
-    // fallback — allocating ~probeCap of GPU buffers on a low-RAM iPhone
-    // (e.g. iPhone 13 with 6 GB) can itself trip Jetsam, and there's
-    // no payoff if we'd have used staticGpuBudgetMB regardless.
-    const probeWorthIt = probeBestCase > staticGpuBudgetMB;
-
-    // Crash-loop guard: if a previous probe in this session crashed the
-    // tab, we never made it back to the post-probe sentinel clear, so the
-    // sentinel is still set on this load. Skip the probe until the user
-    // closes the tab (clears sessionStorage).
-    let prevProbeCrashed = false;
-    try {
-      prevProbeCrashed = sessionStorage.getItem(MOBILE_PROBE_SENTINEL_KEY) === '1';
-    } catch { /* sessionStorage may be disabled */ }
-
-    let gpuProbe = { probedMB: 0, error: null };
-    let probeSkipReason = null;
-    if (prevProbeCrashed) {
-      probeSkipReason = 'previous probe crashed tab';
-    } else if (!probeWorthIt) {
-      probeSkipReason = `probe ceiling ${probeBestCase} MB ≤ static ${staticGpuBudgetMB} MB`;
-    } else {
-      try { sessionStorage.setItem(MOBILE_PROBE_SENTINEL_KEY, '1'); } catch { /* noop */ }
-      gpuProbe = await probeGpuBudgetMB({
-        stepMB: MOBILE_PROBE_STEP_MB,
-        maxMB: probeCap,
-        timeoutMs: MOBILE_PROBE_TIMEOUT_MS,
-        yieldMs: MOBILE_PROBE_YIELD_MS,
-      });
-      try { sessionStorage.removeItem(MOBILE_PROBE_SENTINEL_KEY); } catch { /* noop */ }
-    }
-
-    const margined = gpuProbe.probedMB - MOBILE_PROBE_SAFETY_MARGIN_MB;
-    let gpuBudgetMB;
-    let source;
-    if (probeSkipReason) {
-      gpuBudgetMB = staticGpuBudgetMB;
-      source = `mobile probe skipped (${probeSkipReason}), using static ${staticGpuBudgetMB} MB for ${mobileFamily}`;
-    } else if (gpuProbe.probedMB > 0 && margined > staticGpuBudgetMB) {
-      gpuBudgetMB = margined;
-      const hitCap = gpuProbe.probedMB + MOBILE_PROBE_STEP_MB > probeCap;
-      const detail = hitCap
-        ? `hit cap ${probeCap} MB`
-        : `stopped at ${gpuProbe.probedMB} MB (OOM)`;
-      source = `mobile probe — ${mobileFamily}, ${detail}, using ${gpuBudgetMB} MB (− ${MOBILE_PROBE_SAFETY_MARGIN_MB} MB margin)`;
-    } else {
-      gpuBudgetMB = staticGpuBudgetMB;
-      if (gpuProbe.probedMB > 0) {
-        source = `mobile probe — ${mobileFamily}, only ${gpuProbe.probedMB} MB measured (below static floor), using static ${staticGpuBudgetMB} MB`;
-      } else {
-        source = `mobile probe failed (${gpuProbe.error || 'unknown'}), using static ${staticGpuBudgetMB} MB for ${mobileFamily}`;
-      }
-    }
-
     const adapterDetail = adapterReadError
       ? ` (adapter read failed: ${adapterReadError})`
       : maxBufferSizeMB > 0
-        ? ` (maxBufferSize ${maxBufferSizeMB} MB → probe cap ${probeCap} MB)`
+        ? ` (maxBufferSize ${maxBufferSizeMB} MB)`
         : '';
 
     return {
@@ -424,12 +342,12 @@ async function _computeBudget() {
       memGB,
       quotaMB,
       probedMB: 0,
-      gpuProbedMB: gpuProbe.probedMB,
-      probeError: 'skipped on mobile (heap probe can trip Jetsam)',
-      gpuProbeError: gpuProbe.error || (probeSkipReason ? `skipped: ${probeSkipReason}` : null),
+      gpuProbedMB: 0,
+      probeError: 'skipped on mobile (probes themselves trigger Jetsam)',
+      gpuProbeError: 'skipped on mobile (probes themselves trigger Jetsam)',
       isMobile: true,
       mobileFamily,
-      source: source + adapterDetail,
+      source: `mobile static budget — ${mobileFamily} (GPU ${gpuBudgetMB} MB for OPFS-streamed weights)${adapterDetail}`,
       heapSource: `mobile static budget — ${mobileFamily} (WASM heap ${heapBudgetMB} MB for KV + compute scratch)`,
     };
   }
