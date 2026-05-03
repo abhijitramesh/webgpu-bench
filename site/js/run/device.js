@@ -84,6 +84,13 @@ const MOBILE_PROBE_TIMEOUT_MS = 10_000;
 const MOBILE_PROBE_YIELD_MS = 50;
 const MOBILE_PROBE_SAFETY_MARGIN_MB = 150;
 
+// SessionStorage sentinel: written before the probe, cleared after. If
+// we see it on the next page load, the previous probe crashed the tab —
+// skip probing and use the static fallback so we don't loop forever
+// with the user staring at a tab that keeps reloading. Cleared at end
+// of probe so subsequent loads in the same session re-probe normally.
+const MOBILE_PROBE_SENTINEL_KEY = 'webgpu-bench:mobile-gpu-probe-in-progress';
+
 // Probe ceiling per family × maxBufferSize tier. Caps are deliberately
 // conservative — a probe that completes successfully gives `cap - margin`,
 // while a probe that OOMs partway gives `probed - margin`. We never
@@ -348,17 +355,47 @@ async function _computeBudget() {
     }
 
     const probeCap = getMobileProbeCapMB(mobileFamily, maxBufferSizeMB);
-    const gpuProbe = await probeGpuBudgetMB({
-      stepMB: MOBILE_PROBE_STEP_MB,
-      maxMB: probeCap,
-      timeoutMs: MOBILE_PROBE_TIMEOUT_MS,
-      yieldMs: MOBILE_PROBE_YIELD_MS,
-    });
+    const probeBestCase = probeCap - MOBILE_PROBE_SAFETY_MARGIN_MB;
+
+    // Skip the probe if even a successful run can't beat the static
+    // fallback — allocating ~probeCap of GPU buffers on a low-RAM iPhone
+    // (e.g. iPhone 13 with 6 GB) can itself trip Jetsam, and there's
+    // no payoff if we'd have used staticGpuBudgetMB regardless.
+    const probeWorthIt = probeBestCase > staticGpuBudgetMB;
+
+    // Crash-loop guard: if a previous probe in this session crashed the
+    // tab, we never made it back to the post-probe sentinel clear, so the
+    // sentinel is still set on this load. Skip the probe until the user
+    // closes the tab (clears sessionStorage).
+    let prevProbeCrashed = false;
+    try {
+      prevProbeCrashed = sessionStorage.getItem(MOBILE_PROBE_SENTINEL_KEY) === '1';
+    } catch { /* sessionStorage may be disabled */ }
+
+    let gpuProbe = { probedMB: 0, error: null };
+    let probeSkipReason = null;
+    if (prevProbeCrashed) {
+      probeSkipReason = 'previous probe crashed tab';
+    } else if (!probeWorthIt) {
+      probeSkipReason = `probe ceiling ${probeBestCase} MB ≤ static ${staticGpuBudgetMB} MB`;
+    } else {
+      try { sessionStorage.setItem(MOBILE_PROBE_SENTINEL_KEY, '1'); } catch { /* noop */ }
+      gpuProbe = await probeGpuBudgetMB({
+        stepMB: MOBILE_PROBE_STEP_MB,
+        maxMB: probeCap,
+        timeoutMs: MOBILE_PROBE_TIMEOUT_MS,
+        yieldMs: MOBILE_PROBE_YIELD_MS,
+      });
+      try { sessionStorage.removeItem(MOBILE_PROBE_SENTINEL_KEY); } catch { /* noop */ }
+    }
 
     const margined = gpuProbe.probedMB - MOBILE_PROBE_SAFETY_MARGIN_MB;
     let gpuBudgetMB;
     let source;
-    if (gpuProbe.probedMB > 0 && margined > staticGpuBudgetMB) {
+    if (probeSkipReason) {
+      gpuBudgetMB = staticGpuBudgetMB;
+      source = `mobile probe skipped (${probeSkipReason}), using static ${staticGpuBudgetMB} MB for ${mobileFamily}`;
+    } else if (gpuProbe.probedMB > 0 && margined > staticGpuBudgetMB) {
       gpuBudgetMB = margined;
       const hitCap = gpuProbe.probedMB + MOBILE_PROBE_STEP_MB > probeCap;
       const detail = hitCap
@@ -389,7 +426,7 @@ async function _computeBudget() {
       probedMB: 0,
       gpuProbedMB: gpuProbe.probedMB,
       probeError: 'skipped on mobile (heap probe can trip Jetsam)',
-      gpuProbeError: gpuProbe.error || null,
+      gpuProbeError: gpuProbe.error || (probeSkipReason ? `skipped: ${probeSkipReason}` : null),
       isMobile: true,
       mobileFamily,
       source: source + adapterDetail,
