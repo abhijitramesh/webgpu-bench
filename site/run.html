@@ -115,6 +115,16 @@
               <h3>Reading the output</h3>
               <p>The <strong>Progress</strong> table updates per-variant with live status (download → cpu → gpu → done). Final per-variant numbers fill the <code>pp tok/s</code> and <code>tg tok/s</code> columns as <code>mean ± stddev</code>. The <strong>Output</strong> textarea below contains the full JSON record — copy it, download it, or (on the HF Space) sign in to submit to the leaderboard.</p>
             </section>
+
+            <section>
+              <h3>Known issues</h3>
+              <dl class="run-instructions-dl">
+                <dt><strong>Safari Private Browsing</strong></dt>
+                <dd>Don't use it. Private mode caps OPFS storage at a few hundred MB per tab, denies <code>navigator.storage.persist()</code>, and routes the file system through an ephemeral backend with stricter sync-handle limits. Downloads fail mid-stream with <em>"operation failed for an unknown transient reason"</em> and retries don't help — the cause isn't transient, it's the browsing mode. Switch to a regular Safari window.</dd>
+                <dt><strong>Mobile tabs (iOS/Android)</strong></dt>
+                <dd>iOS Jetsam and Android's low-memory killer reap tabs that approach the per-process memory ceiling, often silently reloading the page. The Run page applies tighter budgets and forced-eviction on mobile to mitigate, but variants near the budget edge can still crash the tab. Run from a desktop for stable numbers.</dd>
+              </dl>
+            </section>
           </div>
         </details>
 
@@ -128,7 +138,7 @@
              memory pressure, so benchmarks often crash and the tab silently
              reloads. Shown by the controller when isMobileDevice() is true. -->
         <div id="run-mobile-banner" class="run-pages-banner" hidden>
-          <span>Mobile device detected — the per-tab memory budget is tight, and larger quants will likely crash this tab. For representative numbers, run from a laptop or desktop.</span>
+          <span>Mobile device detected — the per-tab memory budget is tight, and larger quants will likely crash this tab. <strong>If you're on Safari, do not use Private Browsing</strong>: it caps OPFS storage at a few hundred MB and disables persistent storage, so model downloads fail with "operation failed for an unknown transient reason." For representative numbers, run from a laptop or desktop.</span>
         </div>
 
         <!-- Crash-recovery banner: set by the controller when a previous
