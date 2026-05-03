@@ -1275,6 +1275,9 @@ async function onRunClick({ studyMode = false } = {}) {
       `${(MOBILE_YIELD_BETWEEN_RUNS_MS / 1000).toFixed(1)} s cooldown between runs ` +
       'so iOS can release WebGPU buffers before the next load.',
     );
+    if (state.budget?.source) {
+      logLine(`GPU budget: ${state.budget.source}`);
+    }
   }
 
   const machine = await machineInfo();
