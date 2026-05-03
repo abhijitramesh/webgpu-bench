@@ -25,36 +25,48 @@ const DEFAULT_BUDGET_MB = 2 * 1024;
 const HOSTED_QUOTA_FRACTION = 0.4;
 const HOSTED_QUOTA_CAP_MB = 8 * 1024;
 
-// Mobile per-tab budgets. iOS Jetsam reaps the tab when the total of
-// (WASM heap + WebGPU buffers + JS heap + native overhead) crosses the
-// device's threshold — heap and GPU memory aren't separately budgeted
-// the way they are on desktop, they share one tab-process pool. So on
-// mobile we use a single budget number for both heapBudgetMB and
-// gpuBudgetMB; variantFits then checks the model fits within that
-// shared pool.
+// Mobile per-device budgets. Two independent caps, mirroring the desktop
+// path — model weights stream from OPFS into WebGPU buffers (see
+// bench-worker.js:patchMEMFS / opfsAlloc), so the model size constrains
+// `gpuBudgetMB`, not `heapBudgetMB`. The WASM heap only has to hold the
+// working set (KV cache + ggml compute scratch + JS heap headroom).
 //
-// Numbers below are derived from public reports / Apple docs:
+// Earlier we collapsed both into a single tab budget on the theory that
+// iOS Jetsam treats the whole tab process as one pool, so any allocation
+// counts the same. That's true for Jetsam — but it conflates *where* the
+// memory lives with *how much* the platform can hand out: the WASM heap
+// has a much tighter practical ceiling than the GPU side, and counting
+// model bytes against the heap ceiling rejected models that load fine
+// via OPFS streaming.
 //
-//  - iPhone WASM practical limit: 300–450 MB
+// Numbers come from public reports / Apple docs:
+//
+//  - iPhone WASM practical limit: 300–450 MB → heap budget
 //      lapcatsoftware.com/articles/2026/1/7.html
 //      news.ycombinator.com/item?id=39039593
 //      github.com/emscripten-core/emscripten/issues/19374
-//      github.com/godotengine/godot/issues/70621 (Godot reduced
-//      WASM_MEM_MAX to 256 MB to eliminate iOS OOM)
+//      github.com/godotengine/godot/issues/70621
 //
 //  - iOS Safari WebGPU maxBufferSize: 256 MB on iPhone 6 / older,
 //    993 MB on iPad Pro M-class. Per-buffer cap, not total.
 //      Apple WWDC 2025 "Unlock GPU computing with WebGPU"
 //
-//  - iPhone 12 Pro reports OOM around 1.5–3 GB but this is the upper
-//    bound; Jetsam typically intervenes much earlier.
+//  - iPhone 12 Pro reports tab OOM around 1.5–3 GB; Jetsam intervenes
+//    earlier under pressure. We undershoot the lower bound for headroom.
 //      developer.apple.com/forums/thread/761666
 //
-// We undershoot to leave margin for KV cache + compute scratch +
-// JS/native overhead inside the same budget.
-const IPHONE_TAB_BUDGET_MB  = 450;
-const IPAD_TAB_BUDGET_MB    = 1500;
-const ANDROID_TAB_BUDGET_MB = 800;
+// Heap budgets = WASM heap practical limits.
+const IPHONE_HEAP_BUDGET_MB  = 450;
+const IPAD_HEAP_BUDGET_MB    = 1500;
+const ANDROID_HEAP_BUDGET_MB = 800;
+
+// GPU budgets = available GPU-buffer capacity for model weights + KV
+// mirror, sized below the Jetsam tab ceiling minus working-set headroom.
+// We can't probe on mobile (the GPU probe itself trips Jetsam — see
+// commit 4f567a5), so these are static per-family estimates.
+const IPHONE_GPU_BUDGET_MB  = 1200;
+const IPAD_GPU_BUDGET_MB    = 2500;
+const ANDROID_GPU_BUDGET_MB = 1500;
 
 function detectMobileFamily() {
   if (typeof navigator === 'undefined') return null;
@@ -69,11 +81,11 @@ function detectMobileFamily() {
   return null;
 }
 
-function getMobileTabBudgetMB(family) {
-  if (family === 'ipad')    return IPAD_TAB_BUDGET_MB;
-  if (family === 'iphone')  return IPHONE_TAB_BUDGET_MB;
-  if (family === 'android') return ANDROID_TAB_BUDGET_MB;
-  return IPHONE_TAB_BUDGET_MB; // safest default
+function getMobileBudgetMB(family) {
+  if (family === 'ipad')    return { heap: IPAD_HEAP_BUDGET_MB,    gpu: IPAD_GPU_BUDGET_MB };
+  if (family === 'iphone')  return { heap: IPHONE_HEAP_BUDGET_MB,  gpu: IPHONE_GPU_BUDGET_MB };
+  if (family === 'android') return { heap: ANDROID_HEAP_BUDGET_MB, gpu: ANDROID_GPU_BUDGET_MB };
+  return { heap: IPHONE_HEAP_BUDGET_MB, gpu: IPHONE_GPU_BUDGET_MB }; // safest default
 }
 
 const PROBE_TIMEOUT_MS = 15_000;
@@ -81,14 +93,10 @@ const GPU_PROBE_STEP_MB = 256;
 const GPU_PROBE_MAX_MB = 8 * 1024;
 const GPU_PROBE_TIMEOUT_MS = 8_000;
 
-// Working-set floor in the WASM heap on desktop. KV cache + compute
-// buffers + JS heap headroom for a typical 1B model at n_ctx=2048 add
-// up to ~400 MB; we require 500 to leave a margin. On mobile the
-// heapBudgetMB === gpuBudgetMB === tabBudget so this floor is checked
-// against the same number — works as long as tabBudget ≥ 500, but iPhone
-// is below that, which means iPhone always fails this check. That's
-// intentional: variantFits also has the GPU-fit check, and the floor
-// here is just preventing absurdly-tiny working sets.
+// Working-set floor in the WASM heap. KV cache + compute buffers + JS
+// heap headroom for a typical 1B model at n_ctx=2048 add up to a few
+// hundred MB. Floor at 256 so an absurdly-tiny heap (or a probe failure
+// that returned 0) doesn't pass variantFits.
 const HEAP_WORKING_SET_FLOOR_MB = 256;
 
 // Per-variant overhead added on top of the model file size when checking
@@ -260,23 +268,19 @@ async function _computeBudget() {
   const mobileFamily = detectMobileFamily();
   const isMobile = mobileFamily !== null;
 
-  // ── Mobile path: single shared tab budget ──
-  // iOS Jetsam (and Android equivalents) cap the entire tab process —
-  // WASM heap + WebGPU buffers + JS heap + native overhead all draw from
-  // one pool. The heap probe and GPU probe both burn capacity from that
-  // same pool and can themselves trip Jetsam (the GPU probe especially
-  // — see commit history for the refresh-loop bug). So on mobile we
-  // skip both probes and use a fixed per-device-class budget derived
-  // from public reports of WebKit/Jetsam thresholds (see comments at
-  // top of this file). heapBudgetMB === gpuBudgetMB === tabBudget; the
-  // variantFits check ends up being effectively `model + overhead ≤
-  // tabBudget`.
+  // ── Mobile path: static per-family budgets, separate heap and GPU ──
+  // Same shape as desktop (independent gpuBudgetMB / heapBudgetMB) so
+  // variantFits checks `model + overhead ≤ gpuBudget` against the GPU-
+  // resident weights and `heapBudget ≥ working-set floor` against the
+  // WASM-heap working set. We can't probe on mobile (both probes can
+  // themselves trip Jetsam — see commits 4f567a5 and 6f33b5d), so we use
+  // researched per-family numbers from the constants block above.
   if (isMobile) {
-    const tabBudget = getMobileTabBudgetMB(mobileFamily);
+    const { heap: heapBudgetMB, gpu: gpuBudgetMB } = getMobileBudgetMB(mobileFamily);
     return {
-      budgetMB: tabBudget,
-      gpuBudgetMB: tabBudget,
-      heapBudgetMB: tabBudget,
+      budgetMB: gpuBudgetMB,
+      gpuBudgetMB,
+      heapBudgetMB,
       memGB,
       quotaMB,
       probedMB: 0,
@@ -285,8 +289,8 @@ async function _computeBudget() {
       gpuProbeError: 'skipped on mobile (probes can themselves trip Jetsam)',
       isMobile: true,
       mobileFamily,
-      source: `mobile shared tab budget — ${mobileFamily} (${tabBudget} MB total for heap + GPU)`,
-      heapSource: 'same pool as GPU on mobile',
+      source: `mobile static budget — ${mobileFamily} (GPU ${gpuBudgetMB} MB for OPFS-streamed weights)`,
+      heapSource: `mobile static budget — ${mobileFamily} (WASM heap ${heapBudgetMB} MB for KV + compute scratch)`,
     };
   }
 
