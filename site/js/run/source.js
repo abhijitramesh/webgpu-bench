@@ -42,6 +42,39 @@ async function getOpfsFileHandle(repo, file, { create }) {
   return dir.getFileHandle(file, { create });
 }
 
+// WebKit (iOS Safari) returns one of these strings/names when the OPFS
+// operation fails because something else (typically a stuck
+// FileSystemSyncAccessHandle from a worker that was Jetsam-killed before
+// it could close cleanly) is still holding the file. The handle is
+// usually released within a few seconds, so retrying with backoff is the
+// documented mitigation. Other "real" errors (NotFoundError, QuotaExceeded)
+// are not transient and shouldn't be retried.
+function isOpfsTransientError(err) {
+  if (!err) return false;
+  const msg = String(err.message || err);
+  if (/unknown transient/i.test(msg)) return true;
+  if (/no modification allowed/i.test(msg)) return true;
+  if (err.name === 'InvalidStateError') return true;
+  if (err.name === 'NoModificationAllowedError') return true;
+  return false;
+}
+
+async function withOpfsRetry(fn) {
+  const delays = [500, 2_000, 5_000];
+  let lastErr;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    try {
+      return await fn(attempt);
+    } catch (err) {
+      lastErr = err;
+      if (!isOpfsTransientError(err)) throw err;
+      if (attempt === delays.length) break;
+      await new Promise((r) => setTimeout(r, delays[attempt]));
+    }
+  }
+  throw lastErr;
+}
+
 export function ggufSource() {
   return {
     async isCached(repo, file) {
@@ -62,13 +95,19 @@ export function ggufSource() {
     // distinguishes a fresh download from a cache hit so the caller can
     // decide whether to evict the variant after the run.
     async opfsHandleForModel(repo, file, onProgress, signal) {
-      const cached = await getOpfsFileHandle(repo, file, { create: false }).catch(() => null);
+      // Cache lookup — wrapped in retry because getFile() can also hit
+      // the WebKit transient (a sync access handle from a previous
+      // worker that was Jetsam-killed mid-run blocks this for a few
+      // seconds until WebKit's GC reaps it).
+      const cached = await withOpfsRetry(async () => {
+        const handle = await getOpfsFileHandle(repo, file, { create: false }).catch(() => null);
+        if (!handle) return null;
+        const f = await handle.getFile();
+        return f.size > 0 ? { handle, size: f.size } : null;
+      });
       if (cached) {
-        const f = await cached.getFile();
-        if (f.size > 0) {
-          onProgress?.(1, f.size, f.size);
-          return { handle: cached, size: f.size, wasDownloaded: false };
-        }
+        onProgress?.(1, cached.size, cached.size);
+        return { handle: cached.handle, size: cached.size, wasDownloaded: false };
       }
 
       // Cache miss — download from HF straight into a writable OPFS stream.
@@ -81,30 +120,43 @@ export function ggufSource() {
       }
       const contentLength = parseInt(resp.headers.get('content-length') || '0', 10);
 
-      const handle = await getOpfsFileHandle(repo, file, { create: true });
-      const writable = await handle.createWritable({ keepExistingData: false });
-
       // Opportunistically request persistent storage so eviction is less
       // likely once we commit to pulling large files. Best-effort — ignore
       // rejection (some browsers only grant on user gesture).
       navigator.storage?.persist?.().catch(() => {});
 
-      try {
-        const reader = resp.body.getReader();
-        let downloaded = 0;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          await writable.write(value);
-          downloaded += value.byteLength;
-          if (contentLength > 0) onProgress?.(downloaded / contentLength, downloaded, contentLength);
+      // Retry the createWritable + drain loop on the WebKit transient.
+      // Each retry restarts the download from byte 0; for streamed writes
+      // we can't resume mid-file without re-issuing the fetch, and the
+      // transient typically only fires on createWritable so retrying is
+      // usually a no-op past attempt 0. Fresh fetch per attempt is the
+      // simplest correct thing.
+      return await withOpfsRetry(async (attempt) => {
+        const handle = await getOpfsFileHandle(repo, file, { create: true });
+        const writable = await handle.createWritable({ keepExistingData: false });
+
+        // On retry we need a fresh response body — the original reader
+        // was consumed (or aborted) by the previous attempt. Use the
+        // already-fetched response on attempt 0; re-fetch on retries.
+        const body = attempt === 0 ? resp.body : (await fetch(url, { signal })).body;
+
+        try {
+          const reader = body.getReader();
+          let downloaded = 0;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            await writable.write(value);
+            downloaded += value.byteLength;
+            if (contentLength > 0) onProgress?.(downloaded / contentLength, downloaded, contentLength);
+          }
+          await writable.close();
+          return { handle, size: downloaded, wasDownloaded: true };
+        } catch (err) {
+          try { await writable.abort(err); } catch { /* ignore */ }
+          throw err;
         }
-        await writable.close();
-        return { handle, size: downloaded, wasDownloaded: true };
-      } catch (err) {
-        try { await writable.abort(err); } catch { /* ignore */ }
-        throw err;
-      }
+      });
     },
 
     async evictModel(repo, file) {
