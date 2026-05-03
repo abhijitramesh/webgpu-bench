@@ -64,7 +64,14 @@ const ANDROID_HEAP_BUDGET_MB = 800;
 // mirror, sized below the Jetsam tab ceiling minus working-set headroom.
 // We can't probe on mobile (the GPU probe itself trips Jetsam — see
 // commit 4f567a5), so these are static per-family estimates.
-const IPHONE_GPU_BUDGET_MB  = 1200;
+//
+// iPhone: empirical — 1200 MB caused tab reloads on first variant of a
+// Run study (Llama-3.2-1B Q2_K, 554 MB) on iPhone 17 Pro Max. 700 MB
+// keeps Llama-1B variants out of variantFits while still allowing the
+// 250–500 MB tier (gemma-3-270m Q8, Qwen3-0.6B Q4, etc.) — the band
+// that was missing under the old 450 MB shared cap. Bump back up only
+// when we have data showing a specific device tolerates more.
+const IPHONE_GPU_BUDGET_MB  = 700;
 const IPAD_GPU_BUDGET_MB    = 2500;
 const ANDROID_GPU_BUDGET_MB = 1500;
 
