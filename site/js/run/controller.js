@@ -19,6 +19,12 @@ const DEFAULT_N_PREDICT = 128;
 const DEFAULT_N_CTX = 2048;
 const DEFAULT_N_GPU_LAYERS = 999;
 const YIELD_BETWEEN_RUNS_MS = 500;
+// iOS Safari needs much longer to actually release Metal/WebGPU buffer
+// allocations after worker.terminate() — back-to-back runs at the desktop
+// 500 ms cadence trip Jetsam and Safari reloads the tab. 4 s gives the
+// GPU process room to drain. Android Chromium is more forgiving but
+// shares the same code path here.
+const MOBILE_YIELD_BETWEEN_RUNS_MS = 4_000;
 // llama-bench defaults: -p 512 -n 128 -r 5
 const DEFAULT_N_PROMPT = 512;
 const DEFAULT_N_GEN = 128;
@@ -1264,14 +1270,19 @@ async function onRunClick({ studyMode = false } = {}) {
 
   if (isMobileDevice()) {
     logLine(
-      'Mobile device — running with sequential downloads (no parallel prefetch). ' +
-      'Each variant downloads, runs, evicts, then the next begins.',
+      'Mobile device — sequential downloads (no parallel prefetch), ' +
+      'forced eviction after each variant, ' +
+      `${(MOBILE_YIELD_BETWEEN_RUNS_MS / 1000).toFixed(1)} s cooldown between runs ` +
+      'so iOS can release WebGPU buffers before the next load.',
     );
   }
 
   const machine = await machineInfo();
   const browser = browserInfo();
-  const evictAfter = !!$('evict-after-run')?.checked;
+  // Mobile forces eviction regardless of the checkbox: keeping multiple
+  // ~700 MB GGUFs in OPFS while the GPU process retains buffers from the
+  // just-finished run is the fastest path to a Jetsam tab kill on iOS.
+  const evictAfter = isMobileDevice() || !!$('evict-after-run')?.checked;
 
   // One-ahead prefetch: while variant i runs, we may have variant i+1
   // downloading. Only one prefetch in flight at a time.
@@ -1373,6 +1384,26 @@ async function onRunClick({ studyMode = false } = {}) {
         sessionStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify(state.results));
       } catch { /* quota */ }
 
+      // Mobile: drop per-rep raw arrays from the in-memory record after
+      // sessionStorage has the full copy. The dashboard only reads the
+      // aggregates (avg_ts, stddev_ts) and on iOS Safari every byte that
+      // isn't reclaimed between variants edges the tab toward Jetsam.
+      // Trade-off: an HF submission in the same session loses per-rep
+      // samples; a fresh page-load rehydrates from sessionStorage and
+      // recovers them.
+      if (isMobileDevice()) {
+        if (record.metrics) {
+          delete record.metrics.prefill_samples;
+          delete record.metrics.decode_samples;
+          for (const t of record.metrics.tests || []) {
+            delete t.samples_ts;
+            delete t.samples_ns;
+          }
+        }
+        if (record.consistency) delete record.consistency.token_ids;
+        record.output = '';
+      }
+
       if (state.surface === 'localhost' && $('save-local')?.checked) {
         fetch('/api/results', {
           method: 'POST',
@@ -1402,7 +1433,7 @@ async function onRunClick({ studyMode = false } = {}) {
       }
     }
 
-    await sleep(YIELD_BETWEEN_RUNS_MS);
+    await sleep(isMobileDevice() ? MOBILE_YIELD_BETWEEN_RUNS_MS : YIELD_BETWEEN_RUNS_MS);
   }
 
   // Queue ended or aborted: make sure we don't leave a prefetch running.
