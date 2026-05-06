@@ -197,6 +197,16 @@ export function renderResultsTable(results) {
         case 'submittedBy':
           html += renderSubmitterCell(r.submittedBy);
           break;
+        case 'machineSlug': {
+          const name = r.userMachineName && r.userMachineName !== r.machineSlug
+            ? r.userMachineName : null;
+          if (name) {
+            html += `${escapeHtml(name)}<div class="machine-cell-slug text-muted mono">${escapeHtml(r.machineSlug)}</div>`;
+          } else {
+            html += escapeHtml(r.machineSlug);
+          }
+          break;
+        }
         case 'llamaCppCommit':
           if (r.llamaCppCommit) {
             // Prefer the human-readable git describe when present (e.g.
