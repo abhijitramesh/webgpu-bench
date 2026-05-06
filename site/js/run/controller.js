@@ -1225,6 +1225,7 @@ function isStudyVariant(v) {
   if (!v) return false;
   const sel = state.models?.studySelection;
   if (!sel) return false;
+  if ((sel.extras || []).some(e => e.model === v.modelName && e.quant === v.quant)) return true;
   if (v.modelName === sel.focusModel) return (sel.focusQuants || []).includes(v.quant);
   return v.quant === sel.standardQuant;
 }

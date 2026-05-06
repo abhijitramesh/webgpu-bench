@@ -41,7 +41,10 @@ function applyStudyFilter(variants, studySelection) {
   const focusModel = studySelection.focusModel;
   const focusQuants = new Set(studySelection.focusQuants || []);
   const standardQuant = studySelection.standardQuant;
+  const extras = studySelection.extras || [];
+  const isExtra = v => extras.some(e => e.model === v.modelName && e.quant === v.name);
   return variants.filter(v => {
+    if (isExtra(v)) return true;
     if (v.modelName === focusModel) return focusQuants.has(v.name);
     return v.name === standardQuant;
   });
