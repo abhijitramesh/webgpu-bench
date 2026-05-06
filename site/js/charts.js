@@ -427,13 +427,15 @@ export function renderMachineChart(results, machines) {
 
   const forQuant = passed.filter(r => r.variant === targetQuant);
   const byMachine = groupBy(forQuant, 'machineSlug');
-  const machineLabels = Object.keys(byMachine);
+  const machineSlugs = Object.keys(byMachine);
+  const nameBySlug = new Map(machines.map(m => [m.slug, m.userMachineName || m.cpus || m.slug]));
+  const machineLabels = machineSlugs.map(slug => nameBySlug.get(slug) || slug);
   const browsers = [...new Set(forQuant.map(r => r.browser))].sort();
 
   const datasets = browsers.map(browser => ({
     label: browser,
     backgroundColor: BROWSER_COLORS[browser] || '#888',
-    data: machineLabels.map(slug => {
+    data: machineSlugs.map(slug => {
       const items = byMachine[slug].filter(r => r.browser === browser);
       if (!items.length) return null;
       return items.reduce((s, r) => s + r.decode_tok_s, 0) / items.length;

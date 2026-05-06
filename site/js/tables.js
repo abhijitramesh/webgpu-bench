@@ -296,13 +296,16 @@ export function renderMachineInfo(machines) {
   let html = '<div class="machine-grid">';
   for (const m of machines) {
     const failCount = m.resultCount - m.passCount;
+    const title = m.userMachineName || m.cpus;
+    const showHardwareRow = m.userMachineName && m.userMachineName !== m.cpus;
     html += `
       <div class="machine-card">
         <div class="machine-card-header">
           <svg class="machine-card-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-          <h3>${escapeHtml(m.cpus)}</h3>
+          <h3>${escapeHtml(title)}</h3>
         </div>
         <div class="machine-card-specs">
+          ${showHardwareRow ? `<div class="spec-row"><span class="spec-label">Hardware</span><span class="spec-value">${escapeHtml(m.cpus)}</span></div>` : ''}
           <div class="spec-row"><span class="spec-label">Platform</span><span class="spec-value">${m.platform}</span></div>
           <div class="spec-row"><span class="spec-label">Arch</span><span class="spec-value">${m.arch}</span></div>
           <div class="spec-row"><span class="spec-label">RAM</span><span class="spec-value">${m.totalMemoryGB} GB</span></div>

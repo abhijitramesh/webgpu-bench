@@ -12,7 +12,8 @@ export function initFilters(meta, onChangeCallback) {
   for (const m of meta.machines) {
     const opt = document.createElement('option');
     opt.value = m.slug;
-    opt.textContent = `${m.cpus} (${m.totalMemoryGB}GB)`;
+    const label = m.userMachineName || m.cpus;
+    opt.textContent = `${label} (${m.totalMemoryGB}GB)`;
     machineSelect.appendChild(opt);
   }
 

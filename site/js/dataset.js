@@ -82,6 +82,9 @@ async function fetchRunsBatch(datasetRepo, files) {
 
   const records = [];
   const machinesBySlug = new Map();
+  // Most-recent userReported.machineName per slug — the same machine can be
+  // submitted by multiple people who'd label it differently.
+  const userNameBySlug = new Map(); // slug → { name, ts }
 
   // Fetch in parallel — HF's CDN handles concurrent reads fine.
   const results = await Promise.allSettled(
@@ -106,11 +109,23 @@ async function fetchRunsBatch(datasetRepo, files) {
           // after the merge — leaving them as 0 here is a placeholder.
           resultCount: 0,
           passCount: 0,
+          userMachineName: null,
           llamaCppCommit: r.llamaCppCommit ?? null,
           llamaCppDescribe: r.llamaCppDescribe ?? null,
         });
       }
+      const userName = r.userReported?.machineName?.trim();
+      if (userName) {
+        const ts = r.timestamp || '';
+        const cur = userNameBySlug.get(slug);
+        if (!cur || ts > cur.ts) userNameBySlug.set(slug, { name: userName, ts });
+      }
     }
+  }
+
+  for (const [slug, { name }] of userNameBySlug) {
+    const m = machinesBySlug.get(slug);
+    if (m) m.userMachineName = name;
   }
 
   return { records, machines: [...machinesBySlug.values()], fileCount: files.length };
@@ -169,6 +184,7 @@ function flattenForDashboard(r, slug) {
     llamaCppDescribe: r.llamaCppDescribe ?? null,
     dawnTag: r.dawnTag ?? null,
     submittedBy: r.submittedBy ?? null,
+    userMachineName: r.userReported?.machineName?.trim() || null,
     iterations: r.metrics?.iterations ?? null,
   };
 }
