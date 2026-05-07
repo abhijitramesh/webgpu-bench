@@ -1492,7 +1492,7 @@ function runInWorker({
     worker.onerror = (err) => {
       finish({
         status: 'error',
-        error: err?.message || 'worker error (tab likely out of memory)',
+        error: describeError(err) || 'worker error (tab likely out of memory)',
       });
     };
     worker.onmessageerror = () => {
@@ -1703,14 +1703,30 @@ function describeError(err) {
   if (typeof err === 'number' || typeof err === 'boolean') return String(err);
   if (err instanceof Error) return err.message || String(err);
   if (typeof err === 'object') {
-    if (typeof err.message === 'string' && err.message) return err.message;
-    if (typeof err.error === 'string' && err.error) return err.error;
-    if (typeof err.reason === 'string' && err.reason) return err.reason;
+    const parts = [];
+    if (typeof err.name === 'string' && err.name) parts.push(err.name);
+    if (typeof err.type === 'string' && err.type) parts.push(`type=${err.type}`);
+    if (typeof err.message === 'string' && err.message) parts.push(err.message);
+    if (typeof err.reason === 'string' && err.reason) parts.push(`reason=${err.reason}`);
+    if (typeof err.filename === 'string' && err.filename) parts.push(`file=${err.filename}`);
+    if (typeof err.lineno === 'number' && err.lineno > 0) parts.push(`line=${err.lineno}`);
+    if (typeof err.colno === 'number' && err.colno > 0) parts.push(`col=${err.colno}`);
+    if (typeof err.error === 'string' && err.error) parts.push(`error=${err.error}`);
+    else if (err.error instanceof Error && err.error.message) parts.push(`error=${err.error.message}`);
+    if (parts.length > 0) return parts.join(' | ');
     try {
-      return JSON.stringify(err);
+      const own = {};
+      for (const key of Object.getOwnPropertyNames(err)) {
+        own[key] = err[key];
+      }
+      const json = JSON.stringify(own);
+      if (json && json !== '{}') return json;
     } catch {
-      return String(err);
+      // fall through
     }
+    const tag = Object.prototype.toString.call(err);
+    if (tag && tag !== '[object Object]') return tag;
+    return 'unknown structured error';
   }
   return String(err);
 }
