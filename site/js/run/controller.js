@@ -25,11 +25,6 @@ const YIELD_BETWEEN_RUNS_MS = 500;
 // GPU process room to drain. Android Chromium is more forgiving but
 // shares the same code path here.
 const MOBILE_YIELD_BETWEEN_RUNS_MS = 4_000;
-// Study mode runs each variant twice (d=0, then d=N). On iOS the second
-// load of the *same* model is the highest-risk Jetsam point because the
-// previous worker's Metal allocations have only just been torn down and we
-// do not get the extra time that exists between distinct variants.
-const MOBILE_YIELD_BETWEEN_STUDY_DEPTHS_MS = 8_000;
 // llama-bench defaults: -p 512 -n 128 -r 5
 const DEFAULT_N_PROMPT = 512;
 const DEFAULT_N_GEN = 128;
@@ -1009,7 +1004,7 @@ function progressRowFor(v) {
       } else {
         wallEl.textContent = wallSec > 0 ? wallSec.toFixed(1) : '\u2014';
       }
-      tr.querySelector('.err').textContent = record.error || '';
+      tr.querySelector('.err').textContent = describeError(record.error);
     },
   };
 }
@@ -1281,12 +1276,6 @@ async function onRunClick({ studyMode = false } = {}) {
       `${(MOBILE_YIELD_BETWEEN_RUNS_MS / 1000).toFixed(1)} s cooldown between runs ` +
       'so iOS can release WebGPU buffers before the next load.',
     );
-    if (studyMode && (state.nDepth ?? DEFAULT_N_DEPTH) > 0) {
-      logLine(
-        `Study mode on mobile — inserting ${(MOBILE_YIELD_BETWEEN_STUDY_DEPTHS_MS / 1000).toFixed(1)} s ` +
-        'cooldown between d=0 and d=N passes of the same model.'
-      );
-    }
     if (state.budget?.source) {
       logLine(`GPU budget: ${state.budget.source}`);
     }
@@ -1427,11 +1416,6 @@ async function onRunClick({ studyMode = false } = {}) {
         }).catch(err => logLine(`POST /api/results failed: ${err.message}`));
       }
 
-      const hasMoreDepthPasses = studyMode && nDepth !== depthsToRun[depthsToRun.length - 1];
-      if (hasMoreDepthPasses && isMobileDevice() && !state.aborted) {
-        row.setStatus('cooldown', `waiting ${(MOBILE_YIELD_BETWEEN_STUDY_DEPTHS_MS / 1000).toFixed(0)}s before next depth pass`);
-        await sleep(MOBILE_YIELD_BETWEEN_STUDY_DEPTHS_MS);
-      }
     }
 
     clearRunIntent();
@@ -1713,6 +1697,24 @@ async function runVariantWithIterations(v, row, opts = {}) {
 
 function round2(n) { return Number.isFinite(n) ? parseFloat(n.toFixed(2)) : 0; }
 
+function describeError(err) {
+  if (err == null) return '';
+  if (typeof err === 'string') return err;
+  if (typeof err === 'number' || typeof err === 'boolean') return String(err);
+  if (err instanceof Error) return err.message || String(err);
+  if (typeof err === 'object') {
+    if (typeof err.message === 'string' && err.message) return err.message;
+    if (typeof err.error === 'string' && err.error) return err.error;
+    if (typeof err.reason === 'string' && err.reason) return err.reason;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  }
+  return String(err);
+}
+
 // Pull pp/tg test results out of a metrics.tests array. Returns null if the
 // requested test wasn't run (e.g. nPrompt=0 means no pp test).
 function findTest(tests, prefix) {
@@ -1760,7 +1762,7 @@ function makeRecord(v, vr, machine, browser, wallTimeMs) {
 
   return {
     status: vr.status,
-    error: vr.error || null,
+    error: describeError(vr.error) || null,
     model: v.modelName,
     variant: v.quant,
     filename: v.filename,
@@ -1929,7 +1931,7 @@ function generateMarkdown(results) {
   if (failed.length) {
     body += `## Failed (${failed.length})\n\n`;
     for (const r of failed) {
-      body += `- **${r.model}** ${r.variant}: \`${r.error || 'unknown error'}\`\n`;
+      body += `- **${r.model}** ${r.variant}: \`${describeError(r.error) || 'unknown error'}\`\n`;
     }
     body += `\n`;
   }
