@@ -1024,6 +1024,14 @@ function logLine(msg) {
   const line = `[${new Date().toISOString().slice(11, 23)}] ${msg}\n`;
   pre.textContent += line;
   pre.scrollTop = pre.scrollHeight;
+
+  if (msg.startsWith('[wasm:err]')) {
+    const wasmPre = $('wasm-error-output');
+    if (wasmPre) {
+      wasmPre.textContent += line;
+      wasmPre.scrollTop = wasmPre.scrollHeight;
+    }
+  }
 }
 
 // ──────────────── machine / browser info ────────────────

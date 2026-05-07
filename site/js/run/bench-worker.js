@@ -70,12 +70,25 @@ const CONSISTENCY_MIN_TOKENS = 8;
 // rep N slowest) — looks like Apple's GPU power-state cooldown.
 const REP_COOLDOWN_MS = 1000;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const MAX_WASM_ERROR_LINES = 12;
 
 // llama.cpp/ggml emit info, warnings, AND errors all to stderr. Tag only the
 // actually-bad lines as :err so real failures stand out.
 function classifyWasmStderr(text) {
   return /\b(error|abort(ed)?|failed|fatal|panic|assert)\b|GGML_ASSERT/i.test(text)
     ? '[wasm:err]' : '[wasm]';
+}
+
+const wasmErrLines = [];
+
+function recordWasmErrLine(line) {
+  wasmErrLines.push(line);
+  if (wasmErrLines.length > MAX_WASM_ERROR_LINES) wasmErrLines.shift();
+}
+
+function recentWasmErrDetail() {
+  if (wasmErrLines.length === 0) return '';
+  return wasmErrLines.join(' || ');
 }
 
 // ─── OPFS-backed model loading (wllama-style) ───
@@ -269,7 +282,11 @@ function describeError(err) {
 
 function formatPhaseError(phase, err) {
   const detail = describeError(err);
-  return detail ? `${phase} threw WASM exception (${detail})` : `${phase} threw WASM exception`;
+  const stderr = recentWasmErrDetail();
+  if (detail && stderr) return `${phase} threw WASM exception (${detail}) | recent stderr: ${stderr}`;
+  if (detail) return `${phase} threw WASM exception (${detail})`;
+  if (stderr) return `${phase} threw WASM exception | recent stderr: ${stderr}`;
+  return `${phase} threw WASM exception`;
 }
 
 async function ccallPhase(Module, phase, returnType, argTypes, args) {
@@ -310,6 +327,7 @@ self.onmessage = async (e) => {
 };
 
 async function runOne({ params, opfsPath }) {
+  wasmErrLines.length = 0;
   const {
     buildType,
     nCtx,
@@ -382,7 +400,12 @@ async function runOne({ params, opfsPath }) {
   const Module = await self.createBenchModule({
     locateFile: (filename) => `/build/${buildType}/${filename}`,
     print: (text) => log(`[wasm] ${text}`),
-    printErr: (text) => log(`${classifyWasmStderr(text)} ${text}`),
+    printErr: (text) => {
+      const tag = classifyWasmStderr(text);
+      const line = `${tag} ${text}`;
+      if (tag === '[wasm:err]') recordWasmErrLine(line);
+      log(line);
+    },
     onAbort: (reason) => {
       const msg = `WASM aborted: ${reason}`;
       result.error = msg;
