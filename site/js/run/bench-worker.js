@@ -34,6 +34,32 @@ const log = (line) => post({ type: 'log', line });
 // flight — JSPI doesn't yield often enough on CPU paths to drive ticks here.
 const status = (s, msg, sinceMs) => post({ type: 'status', status: s, msg, sinceMs });
 
+// Capture the GPUDevice that llama.cpp's WebGPU backend creates so we can
+// destroy() it before the worker terminates. Without this, iOS Safari holds
+// Metal allocations from prior runs long enough for the next model load in a
+// study sweep to push the tab over its memory limit and trigger Jetsam.
+// Installed at module scope so the capture is in place before the bench.js
+// glue is importScripts'd and before any C-side requestAdapter/requestDevice
+// calls run. The wrapper is one-shot per device: if the backend ever
+// re-requests, the latest reference wins.
+let capturedGpuDevice = null;
+if (self.navigator?.gpu && typeof self.navigator.gpu.requestAdapter === 'function') {
+  const origRequestAdapter = self.navigator.gpu.requestAdapter.bind(self.navigator.gpu);
+  self.navigator.gpu.requestAdapter = async (...args) => {
+    const adapter = await origRequestAdapter(...args);
+    if (adapter && typeof adapter.requestDevice === 'function' && !adapter.__deviceWrapped) {
+      const origRequestDevice = adapter.requestDevice.bind(adapter);
+      adapter.requestDevice = async (...devArgs) => {
+        const device = await origRequestDevice(...devArgs);
+        capturedGpuDevice = device;
+        return device;
+      };
+      adapter.__deviceWrapped = true;
+    }
+    return adapter;
+  };
+}
+
 // Below this many compared tokens, the consistency agreement rate is
 // statistical noise (e.g. early-EOS models that produce 1 token always
 // report 100%).
@@ -505,6 +531,18 @@ async function runOne({ params, opfsPath }) {
   // Close the sync handle so OPFS can release its lock on the file (and
   // so a subsequent run can open a fresh handle without colliding).
   opfsFreeAll(Module);
+
+  // Eagerly drop GPU buffers. worker.terminate() alone leaves Metal
+  // allocations alive on iOS Safari long enough for the next study run to
+  // hit Jetsam — destroy() returns the memory synchronously.
+  if (capturedGpuDevice) {
+    try {
+      capturedGpuDevice.destroy();
+    } catch (err) {
+      log(`device.destroy() failed: ${err.message}`);
+    }
+    capturedGpuDevice = null;
+  }
 
   result.status = 'done';
   const summary = result.metrics?.tests
