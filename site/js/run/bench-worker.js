@@ -267,6 +267,27 @@ function describeError(err) {
   return String(err);
 }
 
+function formatPhaseError(phase, err) {
+  const detail = describeError(err);
+  return detail ? `${phase} threw WASM exception (${detail})` : `${phase} threw WASM exception`;
+}
+
+async function ccallPhase(Module, phase, returnType, argTypes, args) {
+  try {
+    return await Module.ccall(phase, returnType, argTypes, args, { async: true });
+  } catch (err) {
+    throw new Error(formatPhaseError(phase, err));
+  }
+}
+
+async function ccallPhaseLabel(Module, phaseLabel, exportName, returnType, argTypes, args) {
+  try {
+    return await Module.ccall(exportName, returnType, argTypes, args, { async: true });
+  } catch (err) {
+    throw new Error(formatPhaseError(phaseLabel, err));
+  }
+}
+
 self.onmessage = async (e) => {
   const { type } = e.data || {};
   if (type !== 'run') {
@@ -387,7 +408,7 @@ async function runOne({ params, opfsPath }) {
 
   // ─── Init backend ───
   status('initializing', 'Initializing llama.cpp backends...');
-  const initResult = await Module.ccall('bench_init', 'number', [], [], { async: true });
+  const initResult = await ccallPhase(Module, 'bench_init', 'number', [], []);
   if (initResult !== 0) throw new Error(`bench_init failed: ${initResult}`);
   log('Backends initialized');
 
@@ -396,12 +417,12 @@ async function runOne({ params, opfsPath }) {
   // accidental mmap attempt surfaces as a clear error rather than a
   // silent heap copy.
   status('loading_model', `Loading model (ctx=${nCtx}, gpu_layers=${nGpuLayers}, mmap=0)...`);
-  const loadResult = await Module.ccall(
+  const loadResult = await ccallPhase(
+    Module,
     'bench_load',
     'number',
     ['string', 'number', 'number', 'number'],
     ['/model.gguf', nCtx, nGpuLayers, 0],
-    { async: true },
   );
   if (loadResult !== 0) throw new Error(`bench_load failed: ${loadResult}`);
   log('Model loaded');
@@ -412,7 +433,7 @@ async function runOne({ params, opfsPath }) {
   // in try/catch — if the C side or a backend errors, the run can still
   // produce perf numbers, just without memoryInfo on the record.
   try {
-    const raw = await Module.ccall('bench_memory_info', 'string', [], [], { async: true });
+    const raw = await ccallPhase(Module, 'bench_memory_info', 'string', [], []);
     result.memoryInfo = parseBenchResult('bench_memory_info', raw);
     const dev = (result.memoryInfo.devices || [])
       .map(d => `${d.name}(${d.type}) free=${(d.free / (1024 * 1024)).toFixed(0)}MB total=${(d.total / (1024 * 1024)).toFixed(0)}MB`)
@@ -431,24 +452,18 @@ async function runOne({ params, opfsPath }) {
     try {
       status('consistency', 'Running consistency check...', Date.now());
       log(`bench_run("...", ${consistencyNPredict}) — consistency phase`);
-      const raw = await Module.ccall(
-        'bench_run', 'string',
+      const raw = await ccallPhase(Module, 'bench_run', 'string',
         ['string', 'number'],
-        [consistencyPrompt, consistencyNPredict],
-        { async: true },
-      );
+        [consistencyPrompt, consistencyNPredict]);
       const r = parseBenchResult('bench_run', raw);
       result.output = r.output || '';
       result.consistency = { token_ids: r.token_ids || [] };
 
       if (refTokenIds) {
         log('bench_eval_tokens — forced-decode vs CPU baseline');
-        const evalRaw = await Module.ccall(
-          'bench_eval_tokens', 'string',
+        const evalRaw = await ccallPhase(Module, 'bench_eval_tokens', 'string',
           ['string', 'string'],
-          [consistencyPrompt, refTokenIds],
-          { async: true },
-        );
+          [consistencyPrompt, refTokenIds]);
         const ev = parseBenchResult('bench_eval_tokens', evalRaw);
         result.consistency = { ...result.consistency, ...ev };
         if (ev.n_tokens < CONSISTENCY_MIN_TOKENS) {
@@ -482,7 +497,7 @@ async function runOne({ params, opfsPath }) {
   // so reps 2..N at the same depth restore from snapshot instead of
   // re-running the prefill (mirroring llama-bench's `cstate` reuse).
   const setDepth = async (label) => {
-    const raw = await Module.ccall('bench_set_depth', 'string', ['number'], [nDepth], { async: true });
+    const raw = await ccallPhaseLabel(Module, `bench_set_depth(${nDepth}) ${label}`, 'bench_set_depth', 'string', ['number'], [nDepth]);
     const r = parseBenchResult(`bench_set_depth(${nDepth}) ${label}`, raw);
     if (nDepth > 0) {
       log(`bench_set_depth(${nDepth}) ${label}: ${r.cached ? 'restored snapshot' : 'prefilled'}`);
@@ -497,7 +512,7 @@ async function runOne({ params, opfsPath }) {
           status('perf', `warmup pp${nPrompt}${depthSuffix}`, Date.now());
           await setDepth('pp warmup');
           log(`bench_pp(${nPrompt})${depthSuffix} — warmup`);
-          const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
+          const raw = await ccallPhaseLabel(Module, `bench_pp warmup (${nPrompt}${depthSuffix})`, 'bench_pp', 'string', ['number'], [nPrompt]);
           parseBenchResult('bench_pp warmup', raw);
         }
         const samples_ns = [];
@@ -505,7 +520,7 @@ async function runOne({ params, opfsPath }) {
           status('perf', `pp${nPrompt}${depthSuffix} ${i + 1}/${nReps}`, Date.now());
           await setDepth(`pp rep ${i + 1}/${nReps}`);
           const t0 = performance.now();
-          const raw = await Module.ccall('bench_pp', 'string', ['number'], [nPrompt], { async: true });
+          const raw = await ccallPhaseLabel(Module, `bench_pp rep ${i + 1}/${nReps} (${nPrompt}${depthSuffix})`, 'bench_pp', 'string', ['number'], [nPrompt]);
           const t_ns = (performance.now() - t0) * 1e6;
           parseBenchResult('bench_pp', raw);
           samples_ns.push(t_ns);
@@ -528,7 +543,7 @@ async function runOne({ params, opfsPath }) {
           status('perf', `warmup tg${nGen}${depthSuffix}`, Date.now());
           await setDepth('tg warmup');
           log(`bench_tg(${nGen})${depthSuffix} — warmup`);
-          const raw = await Module.ccall('bench_tg', 'string', ['number'], [nGen], { async: true });
+          const raw = await ccallPhaseLabel(Module, `bench_tg warmup (${nGen}${depthSuffix})`, 'bench_tg', 'string', ['number'], [nGen]);
           parseBenchResult('bench_tg warmup', raw);
         }
         const samples_ns = [];
@@ -536,7 +551,7 @@ async function runOne({ params, opfsPath }) {
           status('perf', `tg${nGen}${depthSuffix} ${i + 1}/${nReps}`, Date.now());
           await setDepth(`tg rep ${i + 1}/${nReps}`);
           const t0 = performance.now();
-          const raw = await Module.ccall('bench_tg', 'string', ['number'], [nGen], { async: true });
+          const raw = await ccallPhaseLabel(Module, `bench_tg rep ${i + 1}/${nReps} (${nGen}${depthSuffix})`, 'bench_tg', 'string', ['number'], [nGen]);
           const t_ns = (performance.now() - t0) * 1e6;
           parseBenchResult('bench_tg', raw);
           samples_ns.push(t_ns);
@@ -560,7 +575,7 @@ async function runOne({ params, opfsPath }) {
     }
   }
 
-  await Module.ccall('bench_exit', null, [], [], { async: true });
+  await ccallPhase(Module, 'bench_exit', null, [], []);
 
   // Close the sync handle so OPFS can release its lock on the file (and
   // so a subsequent run can open a fresh handle without colliding).
