@@ -71,6 +71,7 @@ const CONSISTENCY_MIN_TOKENS = 8;
 const REP_COOLDOWN_MS = 1000;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const MAX_WASM_ERROR_LINES = 12;
+const MAX_WASM_STDERR_LINES = 20;
 
 // llama.cpp/ggml emit info, warnings, AND errors all to stderr. Tag only the
 // actually-bad lines as :err so real failures stand out.
@@ -80,6 +81,12 @@ function classifyWasmStderr(text) {
 }
 
 const wasmErrLines = [];
+const wasmStderrLines = [];
+
+function recordWasmStderrLine(line) {
+  wasmStderrLines.push(line);
+  if (wasmStderrLines.length > MAX_WASM_STDERR_LINES) wasmStderrLines.shift();
+}
 
 function recordWasmErrLine(line) {
   wasmErrLines.push(line);
@@ -89,6 +96,11 @@ function recordWasmErrLine(line) {
 function recentWasmErrDetail() {
   if (wasmErrLines.length === 0) return '';
   return wasmErrLines.join(' || ');
+}
+
+function recentWasmStderrDetail() {
+  if (wasmStderrLines.length === 0) return '';
+  return wasmStderrLines.join(' || ');
 }
 
 // ─── OPFS-backed model loading (wllama-style) ───
@@ -283,9 +295,12 @@ function describeError(err) {
 function formatPhaseError(phase, err) {
   const detail = describeError(err);
   const stderr = recentWasmErrDetail();
+  const stderrTail = recentWasmStderrDetail();
   if (detail && stderr) return `${phase} threw WASM exception (${detail}) | recent stderr: ${stderr}`;
+  if (detail && stderrTail) return `${phase} threw WASM exception (${detail}) | recent stderr tail: ${stderrTail}`;
   if (detail) return `${phase} threw WASM exception (${detail})`;
   if (stderr) return `${phase} threw WASM exception | recent stderr: ${stderr}`;
+  if (stderrTail) return `${phase} threw WASM exception | recent stderr tail: ${stderrTail}`;
   return `${phase} threw WASM exception`;
 }
 
@@ -328,6 +343,7 @@ self.onmessage = async (e) => {
 
 async function runOne({ params, opfsPath }) {
   wasmErrLines.length = 0;
+  wasmStderrLines.length = 0;
   const {
     buildType,
     nCtx,
@@ -403,6 +419,7 @@ async function runOne({ params, opfsPath }) {
     printErr: (text) => {
       const tag = classifyWasmStderr(text);
       const line = `${tag} ${text}`;
+      recordWasmStderrLine(line);
       if (tag === '[wasm:err]') recordWasmErrLine(line);
       log(line);
     },
