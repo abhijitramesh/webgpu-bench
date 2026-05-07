@@ -25,6 +25,11 @@ const YIELD_BETWEEN_RUNS_MS = 500;
 // GPU process room to drain. Android Chromium is more forgiving but
 // shares the same code path here.
 const MOBILE_YIELD_BETWEEN_RUNS_MS = 4_000;
+// Study mode runs each variant twice (d=0, then d=N). On iOS the second
+// load of the *same* model is the highest-risk Jetsam point because the
+// previous worker's Metal allocations have only just been torn down and we
+// do not get the extra time that exists between distinct variants.
+const MOBILE_YIELD_BETWEEN_STUDY_DEPTHS_MS = 8_000;
 // llama-bench defaults: -p 512 -n 128 -r 5
 const DEFAULT_N_PROMPT = 512;
 const DEFAULT_N_GEN = 128;
@@ -1276,6 +1281,12 @@ async function onRunClick({ studyMode = false } = {}) {
       `${(MOBILE_YIELD_BETWEEN_RUNS_MS / 1000).toFixed(1)} s cooldown between runs ` +
       'so iOS can release WebGPU buffers before the next load.',
     );
+    if (studyMode && (state.nDepth ?? DEFAULT_N_DEPTH) > 0) {
+      logLine(
+        `Study mode on mobile — inserting ${(MOBILE_YIELD_BETWEEN_STUDY_DEPTHS_MS / 1000).toFixed(1)} s ` +
+        'cooldown between d=0 and d=N passes of the same model.'
+      );
+    }
     if (state.budget?.source) {
       logLine(`GPU budget: ${state.budget.source}`);
     }
@@ -1414,6 +1425,12 @@ async function onRunClick({ studyMode = false } = {}) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(record),
         }).catch(err => logLine(`POST /api/results failed: ${err.message}`));
+      }
+
+      const hasMoreDepthPasses = studyMode && nDepth !== depthsToRun[depthsToRun.length - 1];
+      if (hasMoreDepthPasses && isMobileDevice() && !state.aborted) {
+        row.setStatus('cooldown', `waiting ${(MOBILE_YIELD_BETWEEN_STUDY_DEPTHS_MS / 1000).toFixed(0)}s before next depth pass`);
+        await sleep(MOBILE_YIELD_BETWEEN_STUDY_DEPTHS_MS);
       }
     }
 
