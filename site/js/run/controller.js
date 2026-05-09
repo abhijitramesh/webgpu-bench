@@ -1282,6 +1282,7 @@ async function onRunClick({ studyMode = false } = {}) {
       'Mobile device — sequential downloads (no parallel prefetch), ' +
       'forced eviction after each variant, ' +
       `${(MOBILE_YIELD_BETWEEN_RUNS_MS / 1000).toFixed(1)} s cooldown between runs ` +
+      '(and between depth passes in study mode) ' +
       'so iOS can release WebGPU buffers before the next load.',
     );
     if (state.budget?.source) {
@@ -1370,8 +1371,22 @@ async function onRunClick({ studyMode = false } = {}) {
     const depthsToRun = (studyMode && baseDepth > 0) ? [0, baseDepth] : [baseDepth];
 
     let sharedCpu = null;
-    for (const nDepth of depthsToRun) {
+    for (let di = 0; di < depthsToRun.length; di++) {
       if (state.aborted) break;
+      // Inter-depth cooldown — mirrors the inter-variant sleep below. In
+      // study mode each variant spawns a fresh worker for d=0 and another
+      // for d=N back-to-back; without a gap, the second worker requests a
+      // GPUDevice and a larger KV cache while iOS Metal is still draining
+      // the just-terminated first worker. On long study queues this is
+      // the seam where cumulative pressure tips the tab into Jetsam,
+      // typically on the last (largest) variant.
+      if (di > 0) {
+        const cooldownMs = isMobileDevice() ? MOBILE_YIELD_BETWEEN_RUNS_MS : YIELD_BETWEEN_RUNS_MS;
+        row.setStatus('cooldown', `${(cooldownMs / 1000).toFixed(1)}s before d=${depthsToRun[di]}`);
+        await sleep(cooldownMs);
+        if (state.aborted) break;
+      }
+      const nDepth = depthsToRun[di];
       const start = performance.now();
       const variantResult = await runVariantWithIterations(v, row, {
         nDepth,
