@@ -1,0 +1,80 @@
+{
+  "machine": {
+    "slug": "apple-metal-3-8gb-darwin",
+    "platform": "darwin",
+    "arch": "arm",
+    "cpus": "apple metal-3",
+    "totalMemoryGB": 8
+  },
+  "submittedAt": "2026-04-24T08:34:31.105Z",
+  "benchmarkConfig": {
+    "nCtx": 2048,
+    "nPredict": 128,
+    "nGpuLayers": 999
+  },
+  "results": [
+    {
+      "status": "done",
+      "error": null,
+      "model": "Llama-3.2-1B-Instruct",
+      "variant": "Q4_1",
+      "filename": "Llama-3.2-1B-Instruct-Q4_1.gguf",
+      "repo": "unsloth/Llama-3.2-1B-Instruct-GGUF",
+      "sizeMB": 793.21,
+      "browser": "chromium-147",
+      "nCtx": 2048,
+      "nPredict": 128,
+      "nGpuLayers": 999,
+      "timestamp": "2026-04-24T07:21:54.498Z",
+      "wallTimeMs": 121113.60000002384,
+      "webgpuAvailable": true,
+      "gpuAdapterInfo": {},
+      "buildType": "jspi",
+      "metrics": {
+        "prefill_tok_s": 141.19,
+        "decode_tok_s": 58.63,
+        "prefill_tok_s_stdev": 33.05,
+        "decode_tok_s_stdev": 0.32,
+        "prefill_samples": [
+          75.54,
+          151.37,
+          158.08,
+          163.67,
+          157.28
+        ],
+        "decode_samples": [
+          58.03,
+          58.6,
+          58.91,
+          58.79,
+          58.82
+        ],
+        "iterations": 5,
+        "n_p_eval": 31,
+        "n_eval": 127,
+        "t_p_eval_ms": 410.4,
+        "t_eval_ms": 2188.4
+      },
+      "consistency": {
+        "agreement_rate": 0.9922,
+        "n_agree": 127,
+        "n_tokens": 128,
+        "first_disagreement": 100
+      },
+      "cpu_baseline": {
+        "prefill_tok_s": 3.04,
+        "decode_tok_s": 2.62
+      },
+      "machine": {
+        "slug": "apple-metal-3-8gb-darwin",
+        "platform": "darwin",
+        "platformVersion": "26.4.1",
+        "arch": "arm",
+        "cpus": "apple metal-3",
+        "totalMemoryGB": 8,
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+      },
+      "source": "bench.html"
+    }
+  ]
+}
