@@ -33,6 +33,7 @@ window.addEventListener('unhandledrejection', (e) => {
   const nDepth              = parseInt(params.get('nDepth')     || '0', 10);
   const nCtx                = parseInt(params.get('nCtx')       || '2048', 10);
   const nGpuLayers          = parseInt(params.get('nGpuLayers') || '999', 10);
+  const noWarmup            = params.get('noWarmup') === '1';
   const refTokenIds         = params.get('refTokenIds') || null;
   // mode=perf → skip consistency entirely (e.g. for the GPU perf-only pass).
   // mode=consistency → skip perf (e.g. CPU baseline pass that just needs token_ids).
@@ -147,7 +148,7 @@ window.addEventListener('unhandledrejection', (e) => {
         nGen:    runPerf ? nGen    : 0,
         nReps,
         nDepth:  runPerf ? nDepth  : 0,
-        noWarmup: false,
+        noWarmup,
       },
       opfsPath: { rootDir: OPFS_ROOT_NAME, repo: hfRepo, filename: modelFile },
     });

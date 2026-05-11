@@ -99,6 +99,7 @@ function buildHarnessUrl(serverUrl, variant, nGpuLayers, refTokenIds = null, mod
   harnessUrl.searchParams.set('nCtx', String(nCtx));
   harnessUrl.searchParams.set('nGpuLayers', String(nGpuLayers));
   harnessUrl.searchParams.set('mode', mode);
+  if (config.NO_WARMUP) harnessUrl.searchParams.set('noWarmup', '1');
   if (refTokenIds) harnessUrl.searchParams.set('refTokenIds', refTokenIds);
   return harnessUrl.toString();
 }

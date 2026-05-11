@@ -56,13 +56,6 @@ int bench_init() {
 }
 
 int bench_load(const char * model_path, int n_ctx, int n_gpu_layers, int use_mmap) {
-    fprintf(stderr, "bench_load: begin path=%s ctx=%d gpu_layers=%d mmap=%d\n",
-        model_path ? model_path : "(null)", n_ctx, n_gpu_layers, use_mmap);
-    fflush(stderr);
-
-    // Clean up previous state if any
-    fprintf(stderr, "bench_load: cleanup previous state\n");
-    fflush(stderr);
     if (g_sampler) { llama_sampler_free(g_sampler); g_sampler = nullptr; }
     if (g_ctx)     { llama_free(g_ctx);             g_ctx = nullptr; }
     if (g_model)   { llama_model_free(g_model);     g_model = nullptr; }
@@ -74,57 +67,39 @@ int bench_load(const char * model_path, int n_ctx, int n_gpu_layers, int use_mma
 
     g_n_ctx = n_ctx;
 
-    // Load model. use_mmap=0 forces fread-based loading via the C library —
-    // required for OPFS-backed models, where the file is exposed via
-    // patched MEMFS stream_ops that route reads to a FileSystemSyncAccessHandle.
+    // use_mmap=0 forces fread-based loading via the C library — required for
+    // OPFS-backed models, where the file is exposed via patched MEMFS
+    // stream_ops that route reads to a FileSystemSyncAccessHandle.
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = n_gpu_layers;
     model_params.use_mmap = use_mmap != 0;
 
-    fprintf(stderr, "bench_load: llama_model_load_from_file start\n");
-    fflush(stderr);
     g_model = llama_model_load_from_file(model_path, model_params);
     if (!g_model) {
         fprintf(stderr, "bench_load: failed to load model from %s\n", model_path);
-        fflush(stderr);
         return -1;
     }
-    fprintf(stderr, "bench_load: llama_model_load_from_file done\n");
-    fflush(stderr);
 
-    fprintf(stderr, "bench_load: fetch vocab\n");
-    fflush(stderr);
     g_vocab = llama_model_get_vocab(g_model);
 
-    // Create context
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx    = n_ctx;
     ctx_params.n_batch  = n_ctx;
-    ctx_params.no_perf  = false; // enable performance counters
+    ctx_params.no_perf  = false;
 
-    fprintf(stderr, "bench_load: llama_init_from_model start\n");
-    fflush(stderr);
     g_ctx = llama_init_from_model(g_model, ctx_params);
     if (!g_ctx) {
         fprintf(stderr, "bench_load: failed to create context\n");
-        fflush(stderr);
         llama_model_free(g_model);
         g_model = nullptr;
         return -2;
     }
-    fprintf(stderr, "bench_load: llama_init_from_model done\n");
-    fflush(stderr);
 
-    // Create greedy sampler
-    fprintf(stderr, "bench_load: create sampler chain\n");
-    fflush(stderr);
     auto sparams = llama_sampler_chain_default_params();
     sparams.no_perf = false;
     g_sampler = llama_sampler_chain_init(sparams);
     llama_sampler_chain_add(g_sampler, llama_sampler_init_greedy());
 
-    fprintf(stderr, "bench_load: model loaded, ctx=%d, gpu_layers=%d\n", n_ctx, n_gpu_layers);
-    fflush(stderr);
     return 0;
 }
 
@@ -213,12 +188,7 @@ const char * bench_run(const char * prompt, int n_predict) {
         n_pos++;
     }
 
-    // Get performance metrics
     llama_perf_context_data perf = llama_perf_context(g_ctx);
-
-    // Print perf to stderr for debug
-    llama_perf_sampler_print(g_sampler);
-    llama_perf_context_print(g_ctx);
 
     // Escape output text for JSON (basic: replace " and \ and newlines)
     std::string escaped_output;
