@@ -29,8 +29,7 @@ export async function loadData() {
     }
     cachedData = empty;
     writeSessionCache(cachedData);
-  } catch (err) {
-    console.warn(`Live dataset load failed: ${err.message}`);
+  } catch {
     cachedData = empty;
   }
   return cachedData;

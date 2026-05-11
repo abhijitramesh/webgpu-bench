@@ -588,8 +588,7 @@ function escapeText(s) {
 }
 function escapeAttr(s) { return escapeText(s).replace(/"/g, '&quot;'); }
 function cssEscape(s) {
-  if (window.CSS?.escape) return CSS.escape(s);
-  return String(s).replace(/[^\w-]/g, ch => `\\${ch}`);
+  return CSS.escape(s);
 }
 
 // ──────────────── selection / filters ────────────────
@@ -2243,8 +2242,3 @@ function restoreSavedResults() {
   }
 }
 
-export function teardownRunSection() {
-  // Placeholder — no explicit teardown today. Future: abort in-flight runs,
-  // detach listeners. For now the Run tab just sits idle.
-  state.aborted = true;
-}
