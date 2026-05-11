@@ -147,7 +147,7 @@ node runner.js --quick --no-webgpu
 | `npm run bench:quick` | Quick benchmark (3 quants) |
 | `npm run bench:chromium` | All quants, Chromium only |
 | `npm run report` | Generate CSV from results |
-| `npm run submit` | Push results to the HF leaderboard dataset (needs `HF_TOKEN` + `HF_DATASET_REPO`); use `-- --legacy-file-only` for the old PR flow |
+| `npm run submit` | Push results to the HF leaderboard dataset (needs `HF_TOKEN` + `HF_DATASET_REPO`) |
 | `npm run build:site` | Build dashboard data |
 
 ### Model Download Caching
@@ -257,17 +257,6 @@ npm run submit
 ```
 
 Each machine/browser pair becomes one commit at `runs/{YYYY-MM-DD}/{slug}-{browser}-{epoch}.json`.
-
-#### Legacy PR flow (for transition / debug)
-
-```bash
-npm run submit -- --legacy-file-only
-git checkout -b results/my-machine
-git add data/machines/
-git commit -m "Add benchmark results for <your machine>"
-git push -u origin results/my-machine
-gh pr create
-```
 
 ### Data Pipeline
 
