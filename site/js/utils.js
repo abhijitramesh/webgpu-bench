@@ -52,3 +52,8 @@ export function groupBy(arr, keyFn) {
   }
   return map;
 }
+
+export function avgBy(items, field) {
+  const vals = items.map(r => r[field]).filter(v => v != null);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}

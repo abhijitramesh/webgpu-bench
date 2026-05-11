@@ -31,7 +31,7 @@ const MAX_FETCH = 1000;
    look newer than `sinceISO` (with a clock-skew buffer applied). On any
    network/CORS/parse failure, returns an empty array — the dashboard then
    silently falls back to the static combined.json baseline. */
-export async function listRecentRunFiles(datasetRepo, sinceISO) {
+async function listRecentRunFiles(datasetRepo, sinceISO) {
   if (!datasetRepo) return [];
   // Cache-bust the listing — HF's CDN can serve a stale tree response, and
   // we specifically care about reading-our-own-write after a submit.
@@ -64,17 +64,10 @@ async function fetchRunFile(datasetRepo, filePath) {
   return resp.json();
 }
 
-/* List the dataset tree and download every file in `runs/`. Pure-live
-   variant of fetchRecentRuns — no cutoff, returns the entire dataset.
-   Caller is responsible for rate-limiting/caching. */
+/* List the dataset tree and download every file in `runs/`. Caller is
+   responsible for rate-limiting/caching. */
 export async function fetchAllRuns(datasetRepo) {
   return fetchRunsBatch(datasetRepo, await listRecentRunFiles(datasetRepo, null));
-}
-
-/* List the dataset tree and download every file that's newer than the
-   baseline's generatedAt. Kept for callers that still want a delta view. */
-export async function fetchRecentRuns(datasetRepo, sinceISO) {
-  return fetchRunsBatch(datasetRepo, await listRecentRunFiles(datasetRepo, sinceISO));
 }
 
 async function fetchRunsBatch(datasetRepo, files) {

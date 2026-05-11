@@ -1,4 +1,4 @@
-import { BROWSER_COLORS, quantSortKey, groupBy, formatTokS } from './utils.js';
+import { BROWSER_COLORS, quantSortKey, groupBy, formatTokS, avgBy } from './utils.js';
 import { expandCpuRows } from './data.js';
 
 // Global Chart.js theme — uses the site's font tokens and a calm tooltip
@@ -78,14 +78,10 @@ export function renderDecodeChart(results) {
 
   const passed = results.filter(r => r.status === 'done' && r.decode_tok_s != null);
   if (passed.length === 0) {
-    canvas.parentElement.querySelector('.chart-empty')?.remove();
-    const msg = document.createElement('div');
-    msg.className = 'chart-empty';
-    msg.textContent = 'No data';
-    canvas.parentElement.appendChild(msg);
+    showEmptyState(canvas);
     return;
   }
-  canvas.parentElement.querySelector('.chart-empty')?.remove();
+  clearEmptyState(canvas);
 
   const byBrowser = groupBy(passed, 'browser');
   const allQuants = [...new Set(passed.map(r => r.variant))].sort((a, b) => quantSortKey(a) - quantSortKey(b));
@@ -95,12 +91,7 @@ export function renderDecodeChart(results) {
     return {
       label: browser,
       backgroundColor: BROWSER_COLORS[browser] || '#888',
-      data: allQuants.map(q => {
-        const group = byQuant[q];
-        if (!group) return null;
-        const vals = group.map(r => r.decode_tok_s).filter(v => v != null);
-        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-      }),
+      data: allQuants.map(q => avgBy(byQuant[q] || [], 'decode_tok_s')),
     };
   });
 
@@ -130,14 +121,10 @@ export function renderPrefillChart(results) {
 
   const passed = results.filter(r => r.status === 'done' && r.prefill_tok_s != null);
   if (passed.length === 0) {
-    canvas.parentElement.querySelector('.chart-empty')?.remove();
-    const msg = document.createElement('div');
-    msg.className = 'chart-empty';
-    msg.textContent = 'No data';
-    canvas.parentElement.appendChild(msg);
+    showEmptyState(canvas);
     return;
   }
-  canvas.parentElement.querySelector('.chart-empty')?.remove();
+  clearEmptyState(canvas);
 
   const byBrowser = groupBy(passed, 'browser');
   const allQuants = [...new Set(passed.map(r => r.variant))].sort((a, b) => quantSortKey(a) - quantSortKey(b));
@@ -147,12 +134,7 @@ export function renderPrefillChart(results) {
     return {
       label: browser,
       backgroundColor: BROWSER_COLORS[browser] || '#888',
-      data: allQuants.map(q => {
-        const group = byQuant[q];
-        if (!group) return null;
-        const vals = group.map(r => r.prefill_tok_s).filter(v => v != null);
-        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-      }),
+      data: allQuants.map(q => avgBy(byQuant[q] || [], 'prefill_tok_s')),
     };
   });
 
@@ -182,14 +164,10 @@ export function renderSizeChart(results) {
 
   const passed = results.filter(r => r.status === 'done' && r.decode_tok_s != null && r.sizeMB);
   if (passed.length === 0) {
-    canvas.parentElement.querySelector('.chart-empty')?.remove();
-    const msg = document.createElement('div');
-    msg.className = 'chart-empty';
-    msg.textContent = 'No data';
-    canvas.parentElement.appendChild(msg);
+    showEmptyState(canvas);
     return;
   }
-  canvas.parentElement.querySelector('.chart-empty')?.remove();
+  clearEmptyState(canvas);
 
   const byBrowser = groupBy(passed, 'browser');
 
@@ -244,11 +222,6 @@ const METRIC_LABELS = {
   decode_tok_s: 'Decode tok/s',
   prefill_tok_s: 'Prefill tok/s',
 };
-
-function avgBy(items, field) {
-  const vals = items.map(r => r[field]).filter(v => v != null);
-  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-}
 
 // CPU is pinned to d=0 by the runner, so apples-to-apples means reading
 // GPU's d=0 number. The CPU side keeps its bare metric (CPU records are

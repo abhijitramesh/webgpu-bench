@@ -1,4 +1,4 @@
-import { formatTokS, formatMs, categorizeError, groupBy, quantSortKey } from './utils.js';
+import { formatTokS, formatMs, categorizeError, groupBy, quantSortKey, avgBy } from './utils.js';
 import { expandCpuRows } from './data.js';
 
 let lastResults = [];
@@ -373,11 +373,6 @@ export function renderCpuGpuTable(results) {
     return;
   }
 
-  function avg(items, field) {
-    const vals = items.map(r => r[field]).filter(v => v != null);
-    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-  }
-
   const gpuBrowsers = [...new Set(gpuResults.map(r => r.browser))].sort();
 
   const cpuByModelVariant = groupBy(cpuResults, r => `${r.model}::${r.variant}`);
@@ -437,7 +432,7 @@ export function renderCpuGpuTable(results) {
 
     // CPU columns
     for (const m of METRICS) {
-      const val = avg(cpuItems, m.cpuField);
+      const val = avgBy(cpuItems, m.cpuField);
       html += `<td><span class="mono">${formatTokS(val)}</span></td>`;
     }
 
@@ -445,8 +440,8 @@ export function renderCpuGpuTable(results) {
     for (const b of gpuBrowsers) {
       const gpuItems = gpuByBrowser[b] || [];
       for (const m of METRICS) {
-        const cpuVal = avg(cpuItems, m.cpuField);
-        const gpuVal = avg(gpuItems, m.gpuField);
+        const cpuVal = avgBy(cpuItems, m.cpuField);
+        const gpuVal = avgBy(gpuItems, m.gpuField);
         const speedup = cpuVal && gpuVal ? gpuVal / cpuVal : null;
         const cls = speedup == null ? '' : speedup >= 3 ? 'text-success' : speedup >= 1.5 ? '' : speedup >= 1 ? 'text-muted' : 'text-error';
         html += `<td><span class="mono">${formatTokS(gpuVal)}</span></td>`;

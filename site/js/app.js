@@ -224,7 +224,7 @@ function renderHeroMeta(data) {
 /* Tween numeric content from 0 to a target. CSS-only via @property would
    need server-side @property registration to work in older Safari; keep
    this 12-line JS tween for predictability. */
-export function animateCount(el, target, { decimals = 0, duration = 600 } = {}) {
+function animateCount(el, target, { decimals = 0, duration = 600 } = {}) {
   if (!el) return;
   const start = parseFloat(el.dataset.value || '0') || 0;
   const end = Number(target) || 0;
